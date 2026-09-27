@@ -8,21 +8,39 @@
 const version = "0.0.5"
 
 import std/[json, os, osproc, strutils, asyncdispatch]
-import std/[httpclient, terminal, parseopt]
+import std/[httpclient, terminal, unicode, parseopt]
+import std/[strformat]
 
 type Action = enum
-  actSearch, actAddRepo, actInstall, actReinstall, actRemove, actRemoveRepo,
-  actAutoremove, actRefresh, actUpgrade, actListRepos, actListInstalled,
-  actListUpdates, actInfo, actStatus, actHistory, actUnknown
+  actSearch
+  actAddRepo
+  actInstall
+  actReinstall
+  actRemove
+  actRemoveRepo
+  actAutoremove
+  actRefresh
+  actUpgrade
+  actListRepos
+  actListInstalled
+  actListUpdates
+  actInfo
+  actStatus
+  actHistory
+  actUnknown
 
 type RepoType = enum
-  repoPpa, repoGithubRelease, repoGitlabRelease, repoGenericUrl
+  repoPpa
+  repoGithubRelease
+  repoGitlabRelease
+  repoGenericUrl
 
-type Repo = tuple
-  name: string        # GitHub Repository Name (e.g., "sharkdp/bat")
-  pkgName: string     # Native Package Name (e.g., "bat")
-  version: string     # Release Tag (e.g., "v0.24.0")
-  downloadUrl: string # Download URL
+type Repo =
+  tuple
+    name: string # GitHub Repository Name (e.g., "sharkdp/bat")
+    pkgName: string # Native Package Name (e.g., "bat")
+    version: string # Release Tag (e.g., "v0.24.0")
+    downloadUrl: string # Download URL
 
 func getDataDir(): string =
   # Get XDG_DATA_HOME or default "~/.local/share"
@@ -31,67 +49,66 @@ func getDataDir(): string =
 
 let repoFile = getDataDir() / "repositories.json"
 
-template debug(args: varargs[untyped]) =
-  when not defined(release) and not defined(danger):
-    system.debugEcho(args)
+include /[ui, commands, repo_man, pkg_man, status]
 
-template errorMsg(args: varargs[untyped]) =
-  styledWriteLine(stderr, fgRed, "Error: ", resetStyle, args)
-
-template warnMsg(args: varargs[untyped]) =
-  styledWriteLine(stderr, fgYellow, styleBright, "Warning: ", resetStyle, args)
-
-template infoMsg(args: varargs[untyped]) =
-  styledWriteLine(stdout, fgCyan, "Info: ", resetStyle, args)
-
-template successMsg(args: varargs[untyped]) =
-  styledWriteLine(stdout, fgGreen, "Success: ", resetStyle, args)
-
-include /[commands, repo_man, pkg_man, status]
-
-proc printHelp() =
-  echo """Nova: Next Generation Software Manager
-  A distro agnostic wrapper that provides a consistent user
-  interface for native package managers.
+template printHelp() =
+  const msg = """Nova:
+  A wrapper for native package managers, that
+  can install packages directly from git repositories.
 
 Usage:
-  nova [Options] Command [Args]...                                                                  
+  nova [Options] Command [Args]...
 
 Options:
-  -h, --help     Show this help message
-  -v, --version  Show version number and exit
+  -h, --help      Show this help message
+  -v, --version   Show version number and exit
 
 Commands:
-  search         Search for a package
-  install        Install one or more packages
-  reinstall      Reinstall one or more packages
-  remove         Remove one or more packages
-  autoremove     Automatically clean up unused dependencies
-  refresh        Refresh the package cache and repositories
-  update         Update the package cache and repositories (same as refresh)
-  upgrade        Upgrade all system packages
-  add-repo       Add repo / Add Git repo <owner/repo> 
-  remove-repo    Remove repo from repo list
-  list-repos     List all tracked repos
-  list-installed List installed packages
-  list-updates   List available updates
-  status         Display status, version, and installed size of package
-  info           Display detailed information about a package
-  history        Show installation history
+  search          Search for a package
+  install         Install package <name> or repo <owner/repo>
+  reinstall       Reinstall one or more packages
+  remove          Remove one or more packages
+  autoremove      Automatically clean up unused dependencies
+  refresh         Refresh the package cache and repos
+  update          Update 'same as refresh'
+  upgrade         Upgrade all packages
+  add-repo        Add system or git repo <owner/repo> 
+  remove-repo     Remove repo from repo list
+  list-repos      List all tracked repos
+  list-installed  List installed packages
+  list-updates    List available updates
+  status          Display install status, version, and size
+  show            Show detailed information about a package
+  info            Display information 'same as show'
+  history         Show installation history
 
 Examples:
-    nova install burntsushi/ripgrep
-    nova install eza-community/eza
+  nova install burntsushi/ripgrep
+  nova install eza-community/eza
 """
+
+  echo formatHelpString(msg)
+
+
+
+
+
+
+
+
 
 proc handleInfoFallback(target: string) =
   var found = false
   if hasCommand("flatpak"):
-    if execCmd("flatpak info " & target & " 2>/dev/null") == 0: found = true
+    if execCmd("flatpak info " & target & " 2>/dev/null") == 0:
+      found = true
   if not found and hasCommand("snap"):
-    if execCmd("snap info " & target & " 2>/dev/null") == 0: found = true
+    if execCmd("snap info " & target & " 2>/dev/null") == 0:
+      found = true
   if not found:
-    errorMsg("Could not find package info for '" & target & "' natively or via Flatpak/Snap.")
+    errorMsg(
+      "Could not find package info for '" & target & "' natively or via Flatpak/Snap."
+    )
     quit(1)
 
 # ----------------------------------------------------------------------------------------
@@ -100,9 +117,7 @@ proc handleInfoFallback(target: string) =
 
 proc main() =
   var p = initOptParser(
-    commandLineParams(),
-    shortNoVal = {'h', 'v'},
-    longNoVal = @["help", "version"],
+    commandLineParams(), shortNoVal = {'h', 'v'}, longNoVal = @["help", "version"]
   )
   var firstAction = ""
   var action: Action = actUnknown
@@ -113,7 +128,6 @@ proc main() =
     case p.kind
     of cmdEnd:
       break
-
     of cmdLongOption, cmdShortOption:
       case p.key.toLowerAscii()
       of "h", "help":
@@ -126,7 +140,6 @@ proc main() =
         echo "Error: Unknown option \'", p.key, "\'"
         echo "Use -h for help \n"
         quit(1)
-
     of cmdArgument:
       if firstAction.len == 0:
         firstAction = p.key
@@ -144,7 +157,10 @@ proc main() =
     quit(1)
 
   var targetStr = targets.join(" ")
-  if action in {actAddRepo, actSearch, actInstall, actReinstall, actRemove, actRemoveRepo, actInfo, actStatus} and targetStr.len == 0:
+  if action in {
+    actAddRepo, actSearch, actInstall, actReinstall, actRemove, actRemoveRepo, actInfo,
+    actStatus,
+  } and targetStr.len == 0:
     errorMsg("The '", firstAction, "' command requires at least one argument.")
     quit(1)
 
@@ -153,21 +169,22 @@ proc main() =
     errorMsg("Could not detect system package manager.")
     quit(1)
 
-
   # Actions to run before native commands
   case action
   of actInstall:
     if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
-      if pkgMan notin ["apt", "dnf"]:
-        errorMsg("Direct Git package installation is currently only supported for APT and DNF.")
+      if pkgMan notin ["apt", "nala", "dnf"]:
+        errorMsg(
+          "Direct Git package installation is currently only supported for APT and DNF."
+        )
         quit(1)
-      
-      infoMsg("Interpreted target as Git repository request.")
+
+      infoMsg("Interpreted target as Git repository.")
       waitFor addGitRepo(pkgMan, targetStr)
 
       let repoName = getRepoName(targetStr).toLowerAscii()
       let currentList = loadOrCreateRepoList(repoFile)
-      
+
       for item in currentList:
         if item.hasKey("repo") and item["repo"].getStr().toLowerAscii() == repoName:
           let downloadUrl = item["download_url"].getStr()
@@ -183,27 +200,25 @@ proc main() =
             # Ensure older systems resolve absolute local file installs safely
             if not targetStr.startsWith("./") and not targetStr.startsWith("/"):
               targetStr = "./" & targetStr
-          
-          break
 
+          break
   of actAddRepo:
     debug "actAddRepo"
     if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
       waitFor pkgMan.addGitRepo(targetStr)
       quit(0)
-
   of actRemoveRepo:
     debug "actRemoveRepo"
     if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
       removeGitRepo(targetStr)
       quit(0)
-
+  of actListRepos:
+    styledEcho(fgWhite, styleBright, "System Repositories:", resetStyle)
   of actStatus:
     let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
     let (output, _) = execCmdEx(nativeCmd)
     parseAndPrintStatus(pkgMan, targetStr, output)
     quit(0)
-
   of actInfo:
     let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
     let (output, exitCode) = execCmdEx(nativeCmd)
@@ -214,11 +229,8 @@ proc main() =
       warnMsg("Native entry missed. Cascading lookup down to global namespaces...")
       handleInfoFallback(targetStr)
       quit(0)
-
   else:
     discard # Allow all other standard native manager actions to flow through cleanly
-
-
 
   # Run native command
   let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
@@ -226,10 +238,7 @@ proc main() =
   let exitCode = execCmd(nativeCmd)
   if exitCode != 0:
     errorMsg("Native package manager exited with error code: ", $exitCode)
-    quit(exitCode)
-
-
-
+    #quit(exitCode)
 
   # Actions to run after native commands
   case action
@@ -244,12 +253,10 @@ proc main() =
   else:
     discard
 
-
   # If it was a temporary downloaded GitHub asset, clean it up cleanly from /tmp
   if targetStr.contains(getTempDir()):
     discard tryRemoveFile(targetStr)
   quit(0)
-
 
 if isMainModule:
   main()
