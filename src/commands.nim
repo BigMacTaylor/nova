@@ -20,12 +20,7 @@ proc getSudoPrefix(): string =
   return suPrefix
 
 # Returns the specific command based on the package manager and action
-proc getNativeCommand(pkgMan: string, action: Action, targetS: string = ""): string =
-  let target =
-    if targetS.len > 0:
-      quoteShell(targetS)
-    else:
-      ""
+proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): string =
   let su = getSudoPrefix()
 
   case pkgMan
@@ -92,7 +87,7 @@ proc getNativeCommand(pkgMan: string, action: Action, targetS: string = ""): str
     of actInstall:       su & "pacman -S --noconfirm " & target
     of actReinstall:     su & "pacman -S --noconfirm " & target
     of actRemove:        su & "pacman -R --noconfirm " & target
-    of actAutoremove:    su & "bash -c 'orphans=$(pacman -Qdtq); [ -n \"$orphans\" ] && pacman -Rns --noconfirm $orphans || echo \"No orphans found.\"'1"
+    of actAutoremove:    su & "bash -c 'orphans=$(pacman -Qdtq); [ -n \"$orphans\" ] && pacman -Rns --noconfirm $orphans || echo \"No orphans found.\"'"
     of actRefresh:       su & "pacman -Sy"
     of actUpgrade:       su & "pacman -Syu --noconfirm"
     of actInfo:          "pacman -Si " & target

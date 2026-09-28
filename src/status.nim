@@ -109,3 +109,4 @@ proc parseAndPrintStatus(pkgMan: string, target: string, output: string) =
     styledWriteLine(stdout, fgRed, styleBright, "Not Installed")
   echo "  Version: " & version
   echo "  Size:    " & size
+  echo ""

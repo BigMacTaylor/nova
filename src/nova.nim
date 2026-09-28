@@ -9,7 +9,6 @@ const version = "0.0.5"
 
 import std/[json, os, osproc, strutils, asyncdispatch]
 import std/[httpclient, terminal, unicode, parseopt]
-import std/[strformat]
 
 type Action = enum
   actSearch
@@ -84,18 +83,10 @@ Commands:
 
 Examples:
   nova install burntsushi/ripgrep
-  nova install eza-community/eza
+  nova install BigMacTaylor/griddle
 """
 
   echo formatHelpString(msg)
-
-
-
-
-
-
-
-
 
 proc handleInfoFallback(target: string) =
   var found = false
@@ -195,13 +186,8 @@ proc main() =
             quit(1)
 
           targetStr = downloadedPayload
-
-          if pkgMan == "apt":
-            # Ensure older systems resolve absolute local file installs safely
-            if not targetStr.startsWith("./") and not targetStr.startsWith("/"):
-              targetStr = "./" & targetStr
-
           break
+
   of actAddRepo:
     debug "actAddRepo"
     if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
@@ -235,10 +221,10 @@ proc main() =
   # Run native command
   let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
   debug "Executing: " & nativeCmd
+
   let exitCode = execCmd(nativeCmd)
   if exitCode != 0:
     errorMsg("Native package manager exited with error code: ", $exitCode)
-    #quit(exitCode)
 
   # Actions to run after native commands
   case action
@@ -256,7 +242,7 @@ proc main() =
   # If it was a temporary downloaded GitHub asset, clean it up cleanly from /tmp
   if targetStr.contains(getTempDir()):
     discard tryRemoveFile(targetStr)
-  quit(0)
+  quit(exitCode)
 
 if isMainModule:
   main()

@@ -92,14 +92,14 @@ proc getRepoName(target: string): string =
       clean = clean.substr(prefix.len)
       break
 
-  # 2. Remove leading slashes if they linger
+  # Remove leading slashes if they linger
   clean = clean.strip(leading = true, trailing = false, chars = {'/'})
 
-  # 3. Clean up trailing ".git" securely using Nim's endswith/substr
+  # Clean up trailing ".git" securely using Nim's endswith/substr
   if clean.toLowerAscii().endsWith(".git"):
-    clean = clean.substr(0, clean.len - 5) # -5 because substr end-index is inclusive
+    clean.removeSuffix(".git")
 
-  # 4. Isolate the base 'owner/repo' component from deep paths
+  # Isolate the base 'owner/repo' component from deep paths
   let parts = clean.split('/')
   if parts.len >= 2:
     return parts[0] & "/" & parts[1]
@@ -113,6 +113,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
   let url = "https://api.github.com/repos/" & repoPath & "/releases"
   let client = newAsyncHttpClient()
   client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
+  client.timeout = 30000
 
   # Fallback return empty
   result = (name: repoPath, pkgName: "", version: "", downloadUrl: "")
@@ -175,7 +176,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
   except JsonParsingError:
     errorMsg("Failed to parse response. You might be rate-limited by GitHub API.")
   except CatchableError as e:
-    errorMsg("Failed to process release data: " & e.msg)
+    errorMsg("Network error trying to get latest release for \'" & repoPath & "\': " & e.msg)
   finally:
     client.close()
 
@@ -183,7 +184,7 @@ proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
   ## Downloads a file from the provided direct URL into a temporary cache folder.
   ## Returns the absolute path of the downloaded file, or "" if the download fails.
 
-  # 1. Parse the true filename from the trailing end of the download URL
+  # Parse filename from the end of the download URL
   let fileInfo = downloadUrl.splitFile()
   let assetName = fileInfo.name & fileInfo.ext
 
@@ -191,9 +192,10 @@ proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
     errorMsg("Could not deduce a valid package filename from URL: " & downloadUrl)
     return ""
 
-  infoMsg("Downloading asset payload: " & assetName)
+  infoMsg("Downloading package \'" & assetName & "\'...")
   let client = newAsyncHttpClient()
   client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
+  client.timeout = 30000
 
   try:
     let cacheDir = getTempDir() / "nova-cache"
@@ -216,12 +218,12 @@ proc addGitRepo(pkgMan, repoInput: string) {.async.} =
     errorMsg("Invalid repository format. Use 'owner/repo' or a full GitHub URL.")
     return
 
-  let currentList = loadOrCreateRepoList(repoFile)
+  let repoList = loadOrCreateRepoList(repoFile)
 
-  for item in currentList:
-    if item.hasKey("repo") and
-        item["repo"].getStr().toLowerAscii() == repoPath.toLowerAscii():
-      warnMsg "Repository \'" & repoPath & "\' is already in git repos."
+  for entry in repoList:
+    let entryRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
+    if entryRepo.len > 0 and entryRepo == repoPath.toLowerAscii():
+      infoMsg "Repository \'" & repoPath & "\' is already in manifest."
       return
 
   let ext =
@@ -229,34 +231,34 @@ proc addGitRepo(pkgMan, repoInput: string) {.async.} =
     of "apt", "nala": "deb"
     of "dnf", "yum", "zypper": "rpm"
     else: ""
+
   let repoData = await getLatestRelease(repoPath, ext)
   if repoData.version == "":
     errorMsg("Could not add repo \'" & repoPath & "\'")
     quit(1)
 
-  # Map the native package name directly into the JSON configuration structure
   let newEntry = %*{
     "repo": repoData.name,
     "pkg_name": repoData.pkgName,
     "version": repoData.version,
     "download_url": repoData.downloadUrl,
   }
-  currentList.add(newEntry)
+  repoList.add(newEntry)
 
   try:
-    writeFile(repoFile, currentList.pretty())
-    successMsg("Added \'" & repoPath & "\' to git repos")
+    writeFile(repoFile, repoList.pretty())
+    successMsg("Added \'" & repoPath & "\' to manifest")
   except IOError:
-    errorMsg("Could not write to file " & repoFile)
+    errorMsg("Could not save changes to manifest.")
 
 proc refreshGitRepos(pkgMan: string) {.async.} =
   if not fileExists(repoFile):
-    warnMsg(repoFile & " not found. Nothing to update.")
+    warnMsg("Repository manifest not found. Nothing to update.")
     return
 
-  let currentList = loadOrCreateRepoList(repoFile)
-  if currentList.len == 0:
-    infoMsg("The repository list is empty.")
+  let repoList = loadOrCreateRepoList(repoFile)
+  if repoList.len == 0:
+    infoMsg("Repository manifest is empty. Nothing to update.")
     return
 
   infoMsg("Checking Git repos for updates...")
@@ -269,72 +271,74 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
   var futures: seq[Future[Repo]] = @[]
   var mappedRepos: seq[JsonNode] = @[]
 
-  for item in currentList:
-    if item.hasKey("repo"):
-      let repoPath = item["repo"].getStr()
+  for entry in repoList:
+    if entry.hasKey("repo"):
+      let repoPath = entry["repo"].getStr()
       futures.add(getLatestRelease(repoPath, ext))
-      mappedRepos.add(item)
+      mappedRepos.add(entry)
 
-  discard await all(futures)
+  try:
+    discard await all(futures)
+  except CatchableError as e:
+    debug("Some repository updates encountered network issues: " & e.msg)
 
   var updatedCount = 0
   for i, future in futures:
-    let item = mappedRepos[i]
-    #let repoPath = item["repo"].getStr()
-    #let oldVersion = item["version"].getStr()
-    #let newVersion = future.read()
+    let entry = mappedRepos[i]
+
+    # Check if asynchronous operation succeeded before reading
+    if not future.finished or future.failed:
+      let repoName = entry.getOrDefault("repo").getStr("unknown")
+      warnMsg("Skipping update check for \'" & repoName & "\' due to network failure.")
+      continue
+
     let repoData = future.read()
-    let oldVersion = item["version"].getStr()
+    let oldVersion = entry.getOrDefault("version").getStr("")
 
     if repoData.version.len > 0 and oldVersion != repoData.version:
       infoMsg(
-        "New version found for " & repoData.name & ": " & oldVersion & " ➡️ " &
-          repoData.version
+        "New version found for " & repoData.name & ": " &
+        (if oldVersion.len > 0: oldVersion else: "None") & " ➡️ " &
+        repoData.version
       )
-      item["version"] = newJString(repoData.version)
-      item["download_url"] = newJString(repoData.downloadUrl)
+      entry["version"] = newJString(repoData.version)
+      entry["download_url"] = newJString(repoData.downloadUrl)
       inc(updatedCount)
 
   if updatedCount > 0:
     try:
-      writeFile(repoFile, currentList.pretty())
-      successMsg("Successfully updated " & $updatedCount & " repository/ies")
+      writeFile(repoFile, repoList.pretty())
+      successMsg("Successfully updated manifest.")
     except IOError:
-      errorMsg("Could not save updates to " & repoFile)
+      errorMsg("Could not save changes to manifest.")
   else:
-    successMsg("Everything is already up to date!")
+    successMsg("All packages are already up to date!")
 
 proc upgradeGitRepos(pkgMan: string) {.async.} =
   if not fileExists(repoFile):
-    infoMsg(
-      "No local tracking manifest found at " & repoFile &
-        ". Skipping external applications."
-    )
+    warnMsg("Repository manifest not found. Skipping git packages.")
     return
 
-  let currentList = loadOrCreateRepoList(repoFile)
-  if currentList.len == 0:
+  let repoList = loadOrCreateRepoList(repoFile)
+  if repoList.len == 0:
     return
 
-  infoMsg("Evaluating local packages against tracked manifests...")
-  let ext =
-    case pkgMan
-    of "apt", "nala": "deb"
-    of "dnf", "yum", "zypper": "rpm"
-    else: ""
+  infoMsg("Checking installed packages against manifest...")
 
-  for item in currentList:
-    if not (item.hasKey("repo") and item.hasKey("pkg_name") and item.hasKey("version")):
+  for entry in repoList:
+    let repoPath = entry.getOrDefault("repo").getStr("")
+    let pkgName = entry.getOrDefault("pkg_name").getStr("")
+    let manifestVer = entry.getOrDefault("version").getStr("")
+    let downloadUrl = entry.getOrDefault("download_url").getStr("")
+
+    if pkgName.len == 0 or downloadUrl.len == 0:
+      debug "Skipping incomplete or malformed entry in manifest."
       continue
 
-    let repoPath = item["repo"].getStr()
-    let pkgName = item["pkg_name"].getStr()
-    let manifestVer = item["version"].getStr()
-
-    # 1. Ask the Linux OS what is installed right now
+    # Get currently installed version
     let installedVer = getInstalledOSVersion(pkgMan, pkgName)
 
-    # 2. Check if it's missing or out of date
+    # Check if it's missing or out of date
     let isMissing = installedVer == ""
     let isStale = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
 
@@ -349,91 +353,82 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
             ") ➡️ Tracked (" & manifestVer & ")"
         )
 
-      # Fetch the latest asset release details to retrieve a fresh downloadUrl
-      let repoData = await getLatestRelease(repoPath, ext)
+      # Fetch the latest asset release from downloadUrl
+      let downloadedPayload = await downloadLatestRelease(downloadUrl)
 
-      if repoData.downloadUrl.len > 0:
-        let downloadedPayload = await downloadLatestRelease(repoData.downloadUrl)
+      if downloadedPayload.len > 0 and fileExists(downloadedPayload):
+        let installCmd = getNativeCommand(pkgMan, actInstall, downloadedPayload)
+        infoMsg("Executing native installer: " & installCmd)
+        let exitCode = execCmd(installCmd)
 
-        if downloadedPayload.len > 0 and fileExists(downloadedPayload):
-          var installTarget = downloadedPayload
-          if pkgMan == "apt" and not installTarget.startsWith("./") and
-              not installTarget.startsWith("/"):
-            installTarget = "./" & installTarget
+        if downloadedPayload.contains(getTempDir()):
+          discard tryRemoveFile(downloadedPayload)
 
-          let installCmd = getNativeCommand(pkgMan, actInstall, installTarget)
-          infoMsg("Executing native installer: " & installCmd)
-          let exitCode = execCmd(installCmd)
-
-          if installTarget.contains(getTempDir()):
-            discard tryRemoveFile(installTarget)
-
-          if exitCode == 0:
-            successMsg("Successfully processed installation package for " & pkgName)
-          else:
-            errorMsg("Native package manager failed during execution for " & pkgName)
+        if exitCode == 0:
+          successMsg("Successfully installed package " & pkgName)
         else:
-          errorMsg("Failed to download package payload for " & pkgName)
+          errorMsg("Native package manager failed during execution for " & pkgName)
+      else:
+        errorMsg("Failed to download package " & pkgName)
     else:
-      debug(pkgName & " [" & installedVer & "] is already completely current.")
+      debug(pkgName & " [" & installedVer & "] is already current.")
 
-  successMsg("All tracked applications evaluated completely.")
+  successMsg("All git packages are up to date.")
 
 proc removeGitRepo(repoInput: string) =
   if not fileExists(repoFile):
-    errorMsg("\'" & repoFile & "\' not found. Nothing to remove.")
+    warnMsg("Repository manifest not found. Nothing to remove.")
     return
 
   let targetRepo = getRepoName(repoInput)
-  let currentList = loadOrCreateRepoList(repoFile)
+  let repoList = loadOrCreateRepoList(repoFile)
   let updatedList = newJArray()
   var removed = false
 
-  for item in currentList:
-    if item.hasKey("repo") and
-        item["repo"].getStr().toLowerAscii() == targetRepo.toLowerAscii():
+  for entry in repoList:
+    if entry.hasKey("repo") and
+        entry["repo"].getStr().toLowerAscii() == targetRepo.toLowerAscii():
       removed = true
     else:
-      updatedList.add(item)
+      updatedList.add(entry)
 
   if removed:
     try:
       writeFile(repoFile, updatedList.pretty())
-      successMsg("Removed \'" & targetRepo & "\' from git repos.")
+      successMsg("Removed \'" & targetRepo & "\' from manifest.")
     except IOError:
-      errorMsg("Could not save file changes.")
+      errorMsg("Could not save changes to manifest.")
   else:
     errorMsg("Repository \'" & targetRepo & "\' not found.")
 
 proc listGitUpdates(pkgMan: string) =
-  ## Compares locally cached manifest records against live native package manager states.
   if not fileExists(repoFile):
-    infoMsg("No tracked repositories configuration found (" & repoFile & " is missing).")
+    warnMsg("Repository manifest not found.")
     return
 
-  let currentList = loadOrCreateRepoList(repoFile)
-  if currentList.len == 0:
-    infoMsg("The tracking repository list is empty.")
+  let repoList = loadOrCreateRepoList(repoFile)
+  if repoList.len == 0:
+    infoMsg("The repository manifest is empty.")
     return
 
   let headPkg = "Package Name"
-  let headInstalled = "Installed (OS)"
-  let headLatest = "Latest (Manifest)"
+  let headInstalled = "Installed"
+  let headLatest = "Latest"
 
   var updatesCount = 0
   var headerPrinted = false
 
-  for item in currentList:
-    if not (item.hasKey("repo") and item.hasKey("pkg_name") and item.hasKey("version")):
+  for entry in repoList:
+    if not (entry.hasKey("repo") and entry.hasKey("pkg_name") and entry.hasKey("version")):
       continue
 
-    let pkgName = item["pkg_name"].getStr()
-    let manifestVer = item["version"].getStr()
+    let pkgName = entry["pkg_name"].getStr()
+    let manifestVer = entry["version"].getStr()
 
-    # 1. Query the live operating system state natively
+    # Get currently installed version
     let installedVer = getInstalledOSVersion(pkgMan, pkgName)
 
-    # 2. Compare if the application is missing completely, or trailing behind the cached index
+    # Check if it's missing or out of date
     let isMissing = installedVer == ""
     let isOutdated = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
 
@@ -444,31 +439,33 @@ proc listGitUpdates(pkgMan: string) =
           stdout, fgWhite, styleBright, "\nAvailable Updates for Git Applications:",
           resetStyle,
         )
-        echo "  " & headPkg.alignLeft(25) & " " & headInstalled.alignLeft(20) & " " &
+        echo "  " & headPkg.alignLeft(32) & " " & headInstalled.alignLeft(20) & " " &
           headLatest
         echo "  " & "-".repeat(68)
         headerPrinted = true
 
-      let displayInstalled = if isMissing: "Not Installed" else: installedVer
+      if isMissing:
+        stdout.write "  " & pkgName.alignLeft(32)
+        styledWrite(stdout, fgYellow, "Not Installed".alignLeft(22))
+      else:
+        stdout.write "  " & pkgName.alignLeft(35)
+        styledWrite(stdout, styleBright, fgGreen, installedVer.alignLeft(19))
 
-      stdout.write "  • " & pkgName.alignLeft(23) & " "
-      styledWrite(stdout, fgYellow, displayInstalled.alignLeft(20))
-      styledWriteLine(stdout, fgGreen, styleBright, & " " & manifestVer)
-
+      styledWriteLine(stdout, styleBright, fgBlue, " " & manifestVer)
       inc(updatesCount)
 
   if updatesCount == 0:
-    successMsg "All Git packages are up to date."
+    successMsg("All git packages are up to date.")
   else:
-    echo "\n  Run 'nova upgrade' to apply these updates.\n"
+    echo "\nRun 'nova upgrade' to apply these updates.\n"
 
 proc listGitReposNew() =
   if not fileExists(repoFile):
     infoMsg("No repositories saved yet. \'" & repoFile & "\' does not exist.")
     return
 
-  let currentList = loadOrCreateRepoList(repoFile)
-  if currentList.len == 0:
+  let repoList = loadOrCreateRepoList(repoFile)
+  if repoList.len == 0:
     infoMsg("The repository list is empty.")
     return
 
@@ -481,15 +478,15 @@ proc listGitReposNew() =
   echo "  " & headRepo.alignLeft(30) & " " & headPkg.alignLeft(20) & " [" & headVer & "]"
   echo "  " & "-".repeat(70)
 
-  for item in currentList:
-    if item.hasKey("repo") and item.hasKey("version"):
-      let repoStr = item["repo"].getStr()
-      let versionStr = item["version"].getStr()
+  for entry in repoList:
+    if entry.hasKey("repo") and entry.hasKey("version"):
+      let repoStr = entry["repo"].getStr()
+      let versionStr = entry["version"].getStr()
 
       # Pull down the true native package name, fallback gracefully if not yet populated
       let pkgStr =
-        if item.hasKey("pkg_name"):
-          item["pkg_name"].getStr()
+        if entry.hasKey("pkg_name"):
+          entry["pkg_name"].getStr()
         else:
           "unknown"
 
@@ -500,17 +497,16 @@ proc listGitReposNew() =
 proc listGitRepos() =
   styledEcho(fgWhite, styleBright, "\nGit Repositories:", resetStyle)
   if not fileExists(repoFile):
-    debug repoFile & " does not exist."
+    warnMsg("Repository manifest not found.")
+    return
+
+  let repoList = loadOrCreateRepoList(repoFile)
+  if repoList.len == 0:
     infoMsg("No repositories saved yet.")
     return
 
-  let currentList = loadOrCreateRepoList(repoFile)
-  if currentList.len == 0:
-    infoMsg("No repositories saved yet.")
-    return
-
-  for item in currentList:
-    if item.hasKey("repo") and item.hasKey("version"):
-      let repoStr = item["repo"].getStr()
-      echo repoStr
+  for entry in repoList:
+    if entry.hasKey("repo") and entry.hasKey("version"):
+      let repoStr = entry["repo"].getStr()
+      echo "  ", repoStr
   echo ""
