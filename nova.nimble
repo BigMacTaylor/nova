@@ -11,7 +11,3 @@ bin           = @["nova"]
 
 # Dependencies
 requires "nim >= 2.0.0"
-
-
-task install, "Custom install task":
-  exec "nim c -d:release -d:danger -d:strip --opt:speed -o:bin/nova src/nova.nim"
