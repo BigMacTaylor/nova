@@ -1,0 +1,38 @@
+name: Build Release
+
+env:
+  MY_APP: "nova"
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-nim:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: 'stable'
+
+      - name: Verify code formatting
+        run: |
+          nimpretty --check src/*.nim
+
+      - name: Build Nim Release Binary
+        run: |
+          mkdir -p dist-bins/
+          nim c -d:release -o:dist-bins/${{ env.MY_APP }} src/${{ env.MY_APP }}.nim
+
+      - name: Upload Binary to Release
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" "dist-bins/${{ env.MY_APP }}" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
