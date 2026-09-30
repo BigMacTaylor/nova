@@ -1,9 +1,9 @@
 # config.nims
 
---define:ssl
+switch("define", "ssl")
 
 if defined(release) or defined(danger):
-  --define:release
-  --define:danger
-  --define:strip
-  --opt:speed
+  switch("define", "strip")
+  switch("define", "danger")
+  switch("opt", "speed")
+  switch("passL", "-s")
