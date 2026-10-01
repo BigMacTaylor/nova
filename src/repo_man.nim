@@ -65,19 +65,22 @@ proc loadOrCreateRepoList(fileName: string): JsonNode =
       errorMsg("Could not create file or directory due to system permissions: " & e.msg)
       return newJArray()
 
-proc getRepoType(target: string): RepoType =
+proc getSourceType(target: string): SourceType =
   let clean = target.toLowerAscii().strip()
 
   if clean.startsWith("ppa:"):
-    return repoPpa
+    return srcPpa
+  elif clean.startsWith("./") or clean.startsWith("../") or
+    clean.startsWith("/") or clean.startsWith("file://") or fileExists(target):
+    return srcLocalFile
   elif clean.contains("github.com"):
-    return repoGithubRelease
+    return srcGithubRepo
   elif clean.contains("gitlab.com"):
-    return repoGitlabRelease
+    return srcGitlabRepo
   elif clean.split('/').len == 2:
-    return repoGithubRelease
+    return srcGithubRepo
   else:
-    return repoGenericUrl
+    return srcGenericUrl
 
 proc getRepoName(target: string): string =
   var clean = target.strip()

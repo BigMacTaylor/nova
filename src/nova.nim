@@ -28,18 +28,18 @@ type Action = enum
   actHistory
   actUnknown
 
-type RepoType = enum
-  repoPpa
-  repoGithubRelease
-  repoGitlabRelease
-  repoGenericUrl
+type SourceType = enum
+  srcLocalFile
+  srcPpa
+  srcGithubRepo
+  srcGitlabRepo
+  srcGenericUrl
 
-type Repo =
-  tuple
-    name: string # GitHub Repository Name (e.g., "sharkdp/bat")
-    pkgName: string # Native Package Name (e.g., "bat")
-    version: string # Release Tag (e.g., "v0.24.0")
-    downloadUrl: string # Download URL
+type Repo = tuple
+  name: string # GitHub Repository Name (e.g., "sharkdp/bat")
+  pkgName: string # Native Package Name (e.g., "bat")
+  version: string # Release Tag (e.g., "v0.24.0")
+  downloadUrl: string # Download URL
 
 func getDataDir(): string =
   # Get XDG_DATA_HOME or default "~/.local/share"
@@ -163,7 +163,7 @@ proc main() =
   # Actions to run before native commands
   case action
   of actInstall:
-    if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
+    if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       if pkgMan notin ["apt", "nala", "dnf"]:
         errorMsg(
           "Direct Git package installation is currently only supported for APT and DNF."
@@ -190,12 +190,12 @@ proc main() =
 
   of actAddRepo:
     debug "actAddRepo"
-    if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
+    if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       waitFor pkgMan.addGitRepo(targetStr)
       quit(0)
   of actRemoveRepo:
     debug "actRemoveRepo"
-    if getRepoType(targetStr) in {repoGithubRelease, repoGitlabRelease}:
+    if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       removeGitRepo(targetStr)
       quit(0)
   of actListRepos:
