@@ -109,6 +109,67 @@ proc getRepoName(target: string): string =
 
   return clean
 
+proc getPackageName(assetName, pkgExtension, repoPath: string): string =
+  # Remove the trailing extension (e.g., ".rpm" or ".deb")
+  var baseName = assetName.substr(0, assetName.len - pkgExtension.len - 2)
+
+  # Clean up architecture and environment suffixes
+  const suffixesToRemove = [
+    "-musl", "-gnu", "-static", "-linux", "-unknown",
+    "-x86_64", "-x86", "-amd64", "-arm64", "-aarch64", 
+    ".x86_64", ".amd64", ".aarch64"
+  ]
+  
+  var changed = true
+  while changed:
+    changed = false
+    for suffix in suffixesToRemove:
+      if baseName.toLowerAscii().endsWith(suffix):
+        baseName = baseName.substr(0, baseName.len - suffix.len - 1)
+        changed = true
+        break
+
+  # Strip version numbers, releases, and keywords moving backwards.
+  while true:
+    let lastDash = baseName.rfind('-')
+    let lastUnder = baseName.rfind('_')
+    let lastSepIdx = max(lastDash, lastUnder)
+    
+    if lastSepIdx == -1:
+      break
+    
+    let trailingPart = baseName.substr(lastSepIdx + 1).toLowerAscii()
+    
+    # Identify if the segment is a version component
+    var hasDigits = false
+    for ch in trailingPart:
+      if ch.isDigit:
+        hasDigits = true
+        break
+
+    # Check if the text matches common pre-release tag prefixes
+    var isPreReleaseTag = false
+    const preReleasePrefixes = ["rc", "alpha", "beta", "preview", "patch", "stable"]
+    for prefix in preReleasePrefixes:
+      if trailingPart.startsWith(prefix):
+        isPreReleaseTag = true
+        break
+
+    let isMetadataSegment =
+      hasDigits or
+      isPreReleaseTag or
+      trailingPart.startsWith("v") or 
+      trailingPart.len == 0 or
+      trailingPart in ["musl", "gnu", "static", "linux", "amd64", "arm64", "x86", "x86_64", "unknown"]
+
+    if isMetadataSegment:
+      baseName = baseName.substr(0, lastSepIdx - 1)
+    else:
+      break
+
+  # Fallback gracefully to the GitHub repository name if parsing clears out the string completely
+  return if baseName.len > 0: baseName else: repoPath.split('/')[1]
+
 proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.async.} =
   infoMsg("Fetching latest release for " & repoPath & "...")
   let isAmd64 = hostCPU == "amd64"
@@ -153,20 +214,11 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
             if matchesArch:
               successMsg("Found installable package \'", assetName, "\'")
 
-              # SAFE PARSING: Extract package name before the first '_' (DEB) or '-' (RPM)
-              # e.g., "ripgrep_14.1.0_amd64.deb" -> "ripgrep"
-              # e.g., "bat-v0.24.0-x86_64.rpm" -> "bat"
-              let separator = if pkgExtension == "deb": '_' else: '-'
-              let nameParts = assetName.split(separator)
-              let extractedPkgName =
-                if nameParts.len > 0:
-                  nameParts[0]
-                else:
-                  repoPath.split('/')[1]
+              let packageName = getPackageName(assetName, pkgExtension, repoPath)
 
               return (
                 name: repoPath,
-                pkgName: extractedPkgName,
+                pkgName: packageName,
                 version: tagName,
                 downloadUrl: downloadUrl,
               )
@@ -348,8 +400,9 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
     if isMissing or isStale:
       if isMissing:
         infoMsg(
-          "Package '" & pkgName & "' is not present on the host system. Installing..."
+          "Package '" & pkgName & "' is not present on the host system. Skipping..."
         )
+        continue
       else:
         infoMsg(
           "Upgrade detected for '" & pkgName & "': Local (" & installedVer &

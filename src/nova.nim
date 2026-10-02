@@ -35,6 +35,15 @@ type SourceType = enum
   srcGitlabRepo
   srcGenericUrl
 
+type PkgType = enum
+  pkgDeb
+  pkgRpm
+  pkgAppImage
+  pkgFlatpak
+  pkgSnap
+  pkgBinary
+  pkgSource
+
 type Repo = tuple
   name: string # GitHub Repository Name (e.g., "sharkdp/bat")
   pkgName: string # Native Package Name (e.g., "bat")
@@ -163,7 +172,56 @@ proc main() =
   # Actions to run before native commands
   case action
   of actInstall:
-    if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
+    let currentList = loadOrCreateRepoList(repoFile)
+    var foundInManifest = false
+
+    # Check if the app argument is already in the manifest
+    for entry in currentList:
+      if entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii():
+        infoMsg("Found package \'", targetStr, "\' in manifest.")
+        foundInManifest = true
+        let pkgName = entry.getOrDefault("pkg_name").getStr("")
+        let manifestVer = entry.getOrDefault("version").getStr("")
+        let downloadUrl = entry.getOrDefault("download_url").getStr("")
+
+        if pkgName.len == 0 or downloadUrl.len == 0:
+          debug "Skipping incomplete or malformed entry in manifest."
+          continue
+
+        # Get currently installed version
+        let installedVer = getInstalledOSVersion(pkgMan, pkgName)
+
+        # Check if it's missing or out of date
+        let isMissing = installedVer == ""
+        let isStale = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
+
+        if isMissing or isStale:
+          if isMissing:
+            infoMsg(
+              "Package '" & pkgName & "' is not present on the host system. Installing..."
+            )
+          else:
+            infoMsg(
+              "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
+                ") ➡️ Tracked (" & manifestVer & ")"
+            )
+
+          # Fetch the latest asset release from downloadUrl
+          let downloadedPayload = waitFor downloadLatestRelease(downloadUrl)
+
+          if downloadedPayload.len == 0 or not fileExists(downloadedPayload):
+            errorMsg("Failed to download package for your architecture")
+            quit(1)
+
+          targetStr = downloadedPayload
+          break
+
+        else:
+          debug(pkgName & " [" & installedVer & "] is already current.")
+          break
+
+    # If it's not in manifest but is a Git repo, add it then fetch it
+    if not foundInManifest and getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       if pkgMan notin ["apt", "nala", "dnf"]:
         errorMsg(
           "Direct Git package installation is currently only supported for APT and DNF."
@@ -174,11 +232,11 @@ proc main() =
       waitFor addGitRepo(pkgMan, targetStr)
 
       let repoName = getRepoName(targetStr).toLowerAscii()
-      let currentList = loadOrCreateRepoList(repoFile)
+      let updatedList = loadOrCreateRepoList(repoFile) # Reload to capture the new addition
 
-      for item in currentList:
-        if item.hasKey("repo") and item["repo"].getStr().toLowerAscii() == repoName:
-          let downloadUrl = item["download_url"].getStr()
+      for entry in updatedList:
+        if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
+          let downloadUrl = entry["download_url"].getStr()
           let downloadedPayload = waitFor downloadLatestRelease(downloadUrl)
 
           if downloadedPayload.len == 0 or not fileExists(downloadedPayload):

@@ -66,16 +66,16 @@ proc parseAction(arg: string): Action =
   of "search": actSearch
   of "install": actInstall
   of "reinstall": actReinstall
-  of "remove": actRemove
+  of "remove", "rm": actRemove
   of "autoremove": actAutoremove
   of "refresh", "update": actRefresh
   of "upgrade": actUpgrade
-  of "add-repo": actAddRepo
+  of "add-repo", "add": actAddRepo
   of "remove-repo": actRemoveRepo
   of "list-repos": actListRepos
   of "list-installed": actListInstalled
   of "list-updates": actListUpdates
-  of "status": actStatus
+  of "status", "stat": actStatus
   of "show", "info": actInfo
   of "history": actHistory
   else: actUnknown
