@@ -198,30 +198,55 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
 
       if assets.len == 0:
         debug "No compiled assets found"
-      else:
-        for asset in assets:
-          let assetName = asset["name"].getStr()
-          let downloadUrl = asset["browser_download_url"].getStr()
-          debug "found asset: ", assetName
+        continue
 
-          if assetName.endsWith("." & pkgExtension):
-            let matchesArch =
-              (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
-              (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
-              ("all" in assetName or "noarch" in assetName) or
-              (not isAmd64 and not isArm64 and hostCPU in assetName)
+      var bestAsset: JsonNode = nil
+      var foundPreferred = false
 
-            if matchesArch:
-              successMsg("Found installable package \'", assetName, "\'")
+      for asset in assets:
+        let assetName = asset["name"].getStr()
+        let downloadUrl = asset["browser_download_url"].getStr()
+        debug "found asset: ", assetName
 
-              let packageName = getPackageName(assetName, pkgExtension, repoPath)
+        if assetName.endsWith("." & pkgExtension):
+          let matchesArch =
+            (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
+            (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
+            ("all" in assetName or "noarch" in assetName) or
+            (not isAmd64 and not isArm64 and hostCPU in assetName)
 
-              return (
-                name: repoPath,
-                pkgName: packageName,
-                version: tagName,
-                downloadUrl: downloadUrl,
-              )
+          if matchesArch:
+            debug "Found matching assat: ", assetName
+            let isMusl = "musl" in assetName.toLowerAscii()
+
+            let isPreferredType = if preferMusl: isMusl else: not isMusl
+
+            # Scenario 1: First architectural match found
+            if bestAsset == nil:
+              bestAsset = asset
+              foundPreferred = isPreferredType
+
+            # Scenario 2: Upgrade fallback slot if we previously only had a musl asset
+            elif not foundPreferred and isPreferredType:
+              bestAsset = asset
+              foundPreferred = true
+              # We found a regular package, we can stop evaluating assets for this release
+              break
+
+      # If we successfully selected an asset out of this release block, process and return it
+      if bestAsset != nil:
+        let finalAssetName = bestAsset["name"].getStr()
+        let downloadUrl = bestAsset["browser_download_url"].getStr()
+
+        successMsg("Found installable package \'", finalAssetName, "\'")
+        let packageName = getPackageName(finalAssetName, pkgExtension, repoPath)
+
+        return (
+          name: repoPath,
+          pkgName: packageName,
+          version: tagName,
+          downloadUrl: downloadUrl,
+        )
 
     warnMsg("Failed to find matching package for your architecture")
     return result

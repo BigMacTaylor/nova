@@ -56,6 +56,7 @@ func getDataDir(): string =
   return dir / "nova"
 
 let repoFile = getDataDir() / "repositories.json"
+var preferMusl = false
 
 include /[ui, commands, repo_man, pkg_man, status]
 
@@ -70,6 +71,7 @@ Usage:
 Options:
   -h, --help      Show this help message
   -v, --version   Show version number and exit
+  --prefer-musl   Prefer musl over glibc (testing)
 
 Commands:
   search          Search for a package
@@ -117,8 +119,11 @@ proc handleInfoFallback(target: string) =
 
 proc main() =
   var p = initOptParser(
-    commandLineParams(), shortNoVal = {'h', 'v'}, longNoVal = @["help", "version"]
+    commandLineParams(), 
+    shortNoVal = {'h', 'v'}, 
+    longNoVal = @["help", "version", "prefer-musl"]
   )
+
   var firstAction = ""
   var action: Action = actUnknown
   var targets: seq[string] = @[]
@@ -136,6 +141,8 @@ proc main() =
       of "v", "version":
         echo "nova version: " & version
         quit(0)
+      of "prefer-musl":
+        preferMusl = true
       else:
         echo "Error: Unknown option \'", p.key, "\'"
         echo "Use -h for help \n"
@@ -197,9 +204,7 @@ proc main() =
 
         if isMissing or isStale:
           if isMissing:
-            infoMsg(
-              "Package '" & pkgName & "' is not present on the host system. Installing..."
-            )
+            debug "Package '" & pkgName & "' is not present on the host system. Installing..."
           else:
             infoMsg(
               "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
