@@ -5,52 +5,43 @@
 #
 # ========================================================================================
 
-proc normalizeVersionBak(versionStr: string): string =
-  let clean = versionStr.strip().toLowerAscii()
+proc normalizeVersion*(asset: string): string =
+  var i = 0
+  while i < asset.len:
+    # Look for digits, or a 'v' followed by a digit
+    let isStartOfVersion = asset[i] in Digits or 
+      (asset[i] == 'v' and i + 1 < asset.len and asset[i+1] in Digits)
 
-  let startIdx = clean.find('-')
-  var base = if startIdx != -1: clean.substr(startIdx + 1) else: clean
+    # Ensure it's bounded by a standard separator not 'x86_64' or 'linux64'
+    let isBounded = i == 0 or asset[i-1] in {'-', '_', '.', ' '}
 
-  # Remove 'v' prefix if GitHub tags include it (e.g., v15.2.0)
-  if base.startsWith("v"):
-    base = base.substr(1)
+    if isStartOfVersion and isBounded:
+      # If it's a leading 'v', skip past it to keep the output purely numeric
+      var nextIdx = i
+      if asset[nextIdx] == 'v': inc(nextIdx)
 
-  # Strip any trailing suffixes like -deb or +fc34
-  let dashIdx = base.find('-')
-  let plusIdx = base.find('+')
-  
-  if dashIdx != -1 and plusIdx != -1:
-    return base.substr(0, min(dashIdx, plusIdx) - 1)
-  elif dashIdx != -1:
-    return base.substr(0, dashIdx - 1)
-  elif plusIdx != -1:
-    return base.substr(0, plusIdx - 1)
-  else:
-    return base
+      # Collect only numeric components (digits and dots)
+      var cleanVer = ""
+      var versionDots = 0
 
-proc normalizeVersion(versionStr: string): string =
-  var base = versionStr.strip()
+      while nextIdx < asset.len and asset[nextIdx] in (Digits + {'.'}):
+        # Only count this as a valid version divider if it's a dot 
+        # that is immediately followed by another digit (e.g., .8 or .2)
+        if asset[nextIdx] == '.' and nextIdx + 1 < asset.len and asset[nextIdx+1] in Digits:
+          inc(versionDots)
+        cleanVer.add(asset[nextIdx])
+        inc(nextIdx)
 
-  # 1. First, strip out known trailing distro markers by finding the first '+' or a '-' followed by a distro revision
-  # We can split by '+' first to get rid of things like '+dfsg-1' cleanly
-  if '+' in base:
-    base = base.split('+')[0]
+      # Strip trailing dot from file extensions
+      cleanVer = cleanVer.strip(chars = {'.'})
 
-  # 2. Handle the package name vs version separation
-  # If there are dashes, we want to find the first piece that looks like a version number
-  if '-' in base:
-    let parts = base.split('-')
-    for part in parts:
-      if part.len > 0 and (part[0].isDigit or part.startsWith("v") or part.startsWith("V")):
-        base = part
-        break # Grab the first part that looks like a version string
+      # Must have at least one internal version dot divider, and end with a digit
+      if versionDots >= 1 and cleanVer.len > 0 and cleanVer[cleanVer.high] in Digits:
+        return cleanVer
 
-  # 3. Final normalization
-  base = base.toLowerAscii()
-  if base.startsWith("v"):
-    base = base.substr(1)
-    
-  return base
+    inc(i)
+
+  return "none"
 
 proc getInstalledOSVersion(pkgMan, pkgName: string): string =
   ## Returns the version string natively installed on the host machine.
@@ -138,7 +129,7 @@ proc getRepoName(target: string): string =
 
   return clean
 
-proc getPackageName(assetName, pkgExtension, repoPath: string): string =
+proc getPackageNameBak(assetName, pkgExtension, repoPath: string): string =
   # Remove the trailing extension (e.g., ".rpm" or ".deb")
   var baseName = assetName.substr(0, assetName.len - pkgExtension.len - 2)
 
@@ -198,3 +189,66 @@ proc getPackageName(assetName, pkgExtension, repoPath: string): string =
 
   # Fallback gracefully to the GitHub repository name if parsing clears out the string completely
   return if baseName.len > 0: baseName else: repoPath.split('/')[1]
+
+proc findVersionStart(asset: string): int =
+  var i = 0
+  while i < asset.len:
+    let isStartOfVersion = asset[i] in Digits or 
+                           (asset[i] == 'v' and i + 1 < asset.len and asset[i+1] in Digits)
+    let isBounded = i == 0 or asset[i-1] in {'-', '_', '.', ' '}
+    
+    if isStartOfVersion and isBounded:
+      let startIdx = i
+      var iMove = i
+      if asset[iMove] == 'v': inc(iMove)
+      
+      var dotCount = 0
+      while iMove < asset.len and asset[iMove] in (Digits + {'.'}):
+        if asset[iMove] == '.': inc(dotCount)
+        inc(iMove)
+      
+      if dotCount >= 1:
+        return startIdx
+    inc(i)
+  return -1
+
+proc cleanKeywords(name: string): string =
+  ## Drops architectural noise and platform descriptors from unversioned regions
+  result = name
+  for keyword in ["-linux", "_linux", "-x86", "_x86", "-arm", "_arm", "-riscv", "-anylinux", "-musl", "_musl"]:
+    let idx = result.find(keyword)
+    if idx > 0:
+      result = result[0 ..< idx]
+
+proc getPackageName*(asset, pkgExtension, repoPath: string): string =
+  # Edge Case: Pure version strings
+  let isPureVer = asset[0] in Digits or (asset[0] == 'v' and asset.len > 1 and asset[1] in Digits)
+  if isPureVer:
+    var idx = if asset[0] == 'v': 1 else: 0
+    while idx < asset.len and asset[idx] in (Digits + {'.'}): inc(idx)
+    if idx == asset.len or asset[idx] in {'-', '+'}:
+      return "unknown"
+
+  # Global aliases up front
+  if asset.startsWith("nvim"): return "neovim"
+
+  # Parse via Version boundaries
+  let verIdx = findVersionStart(asset)
+  if verIdx > 0:
+    let separator = asset[verIdx - 1]
+    
+    if separator == '_':
+      # Conventions like "bat-musl_0.26.1" preserve everything on the left side
+      return asset[0 ..< verIdx - 1].toLowerAscii()
+      
+    elif separator == '-':
+      # Handle hyphenated structures like "fastfetch-linux-amd64"
+      var baseName = asset[0 ..< verIdx - 1].toLowerAscii()
+      return cleanKeywords(baseName)
+
+  # Fallback for completely unversioned binaries (e.g., btop-x86_64, tldr-linux-arm64)
+  var cleanStr = asset.toLowerAscii()
+  let dotPos = cleanStr.find('.')
+  if dotPos != -1: cleanStr = cleanStr[0 ..< dotPos] # drop extensions
+
+  return cleanKeywords(cleanStr)
