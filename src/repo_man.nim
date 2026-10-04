@@ -23,9 +23,9 @@ proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
   client.timeout = 30000
 
   try:
-    let cacheDir = getTempDir() / "nova-cache"
+    let uid = getuid()
+    let cacheDir = getTempDir() / "nova-cache-" & $uid
     createDir(cacheDir)
-
     let destFile = cacheDir / assetName
 
     await client.downloadFile(downloadUrl, destFile)
@@ -308,9 +308,9 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
 
     # Check if it's missing or out of date
     let isMissing = installedVer == ""
-    let isStale = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
+    let isOutdated = (normalizeVersion(manifestVer) > normalizeVersion(installedVer)) and (manifestVer.len > 0)
 
-    if isMissing or isStale:
+    if isMissing or isOutdated:
       if isMissing:
         infoMsg(
           "Package '" & pkgName & "' is not present on the host system. Skipping..."
@@ -399,7 +399,7 @@ proc listGitUpdates(pkgMan: string) =
 
     # Check if it's missing or out of date
     let isMissing = installedVer == ""
-    let isOutdated = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
+    let isOutdated = (normalizeVersion(manifestVer) > normalizeVersion(installedVer)) and (manifestVer.len > 0)
 
     if isMissing or isOutdated:
       # Defer formatting header until we are certain an update row is active

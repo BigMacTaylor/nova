@@ -7,7 +7,7 @@
 
 const version = "0.0.5"
 
-import std/[json, os, osproc, strutils, asyncdispatch]
+import std/[json, os, posix, osproc, strutils, asyncdispatch]
 import std/[httpclient, terminal, unicode, parseopt]
 
 type Action = enum
@@ -270,19 +270,23 @@ proc main() =
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       waitFor pkgMan.addGitRepo(targetStr)
       quit(0)
+
   of actRemoveRepo:
     debug "actRemoveRepo"
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       removeGitRepo(targetStr)
       quit(0)
+
   of actListRepos:
     debug "actListRepos"
     styledEcho(fgWhite, styleBright, " System Repositories:", resetStyle)
+
   of actStatus:
     let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
     let (output, _) = execCmdEx(nativeCmd)
     parseAndPrintStatus(pkgMan, targetStr, output)
     quit(0)
+    
   of actInfo:
     let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
     let (output, exitCode) = execCmdEx(nativeCmd)
@@ -317,9 +321,18 @@ proc main() =
   else:
     discard
 
-  # If it was a temporary downloaded GitHub asset, clean it up cleanly from /tmp
+  # If there was a temporary downloaded asset, clean it up
   if targetStr.contains(getTempDir()):
     discard tryRemoveFile(targetStr)
+
+    let uid = getuid()
+    let userCacheDir = getTempDir() / "nova-cache-" & $uid
+    if dirExists(userCacheDir):
+      try:
+        removeDir(userCacheDir)
+      except CatchableError:
+        discard
+        
   quit(exitCode)
 
 if isMainModule:
