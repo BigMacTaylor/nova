@@ -38,7 +38,7 @@ proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
     client.close()
 
 proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.async.} =
-  infoMsg("Fetching latest release for " & repoPath & "...")
+  infoMsg("Fetching latest release from \'" & repoPath & "\'...")
   let isAmd64 = hostCPU == "amd64"
   let isArm64 = hostCPU == "arm64"
   let url = "https://api.github.com/repos/" & repoPath & "/releases"
@@ -67,7 +67,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
     # Search through releases (optionally prereleases)
     for release in jsonNode:
       let tagName = release["tag_name"].getStr().toLowerAscii()
-      debug "found release: ", tagName
+      infoMsg("Found release: ", tagName)
       let isPrerelease = release.getOrDefault("prerelease").getBool(false)
       let assets = release["assets"]
 
@@ -94,7 +94,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
       # Search through assets
       for asset in assets:
         let assetName = asset["name"].getStr().toLowerAscii()
-        debug "found asset: ", assetName
+        debug "Found asset: ", assetName
 
         # Asset Format Weight (0 to 30)
         var formatScore = -1
@@ -117,11 +117,15 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
         elif assetName.endsWith(".appimage"):
           detectedType = pkgAppImage
           formatScore = 20  # Mid priority format
+          # TODO add appimage support
+          continue
 
         elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
-          warnMsg("Asset is not a valid package: ", assetName)
+          debug "Asset is not a valid package: ", assetName
           detectedType = pkgBinary
           formatScore = 10  # Low priority binary archive
+          # TODO add binary support
+          continue
         else:
           continue # Skip documentation, shasums, or source code
 
@@ -141,12 +145,14 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
           bestAsset = asset
           finalPkgType = detectedType
 
-          # Found stable, native, preferred-lib package
+          # Found stable, native, preferred-lib package, quit parsing assets
           if bestScore == 235: 
             break
-      # Found stable, native, preferred-lib package
-      if bestScore == 235:
+      # Found stable, native/appimage, quit parsing releases
+      if bestScore > 210:
         break
+      else:
+        warnMsg("Could not find package for your architecture.")
 
     # Process and return the best matching asset
     if bestAsset != nil and bestRelease != nil:
@@ -168,7 +174,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
         downloadUrl: downloadUrl,
       )
 
-    warnMsg("Failed to find matching package for your architecture")
+    errorMsg("Failed to find matching package for your architecture.")
     return result
 
   except HttpRequestError as e:
