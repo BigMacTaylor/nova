@@ -47,6 +47,7 @@ type PkgType = enum
 type Repo = tuple
   name: string # GitHub Repository Name (e.g., "sharkdp/bat")
   pkgName: string # Native Package Name (e.g., "bat")
+  pkgType: PkgType # Deb, Binary, AppImage etc.
   version: string # Release Tag (e.g., "v0.24.0")
   downloadUrl: string # Download URL
 
@@ -57,6 +58,7 @@ func getDataDir(): string =
 
 let repoFile = getDataDir() / "repositories.json"
 var preferMusl = false
+var includePrerelease = false
 
 include /[ui, commands, repo_man, pkg_man, status]
 
@@ -72,6 +74,7 @@ Options:
   -h, --help      Show this help message
   -v, --version   Show version number and exit
   --prefer-musl   Prefer musl over glibc (testing)
+  --include-prerelease  Allow beta, rc, and nightly versions over stable releases (testing)
 
 Commands:
   search          Search for a package
@@ -93,8 +96,11 @@ Commands:
   history         Show installation history
 
 Examples:
-  nova install burntsushi/ripgrep
-  nova install BigMacTaylor/griddle
+  nova add burntsushi/ripgrep
+  nova install ripgrep
+
+  nova add-repo https://github.com/BigMacTaylor/griddle
+  nova install griddle
 """
 
   echo formatHelpString(msg)
@@ -121,7 +127,7 @@ proc main() =
   var p = initOptParser(
     commandLineParams(), 
     shortNoVal = {'h', 'v'}, 
-    longNoVal = @["help", "version", "prefer-musl"]
+    longNoVal = @["help", "version", "prefer-musl", "include-prerelease"]
   )
 
   var firstAction = ""
@@ -143,6 +149,8 @@ proc main() =
         quit(0)
       of "prefer-musl":
         preferMusl = true
+      of "include-prerelease":
+        includePrerelease = true
       else:
         echo "Error: Unknown option \'", p.key, "\'"
         echo "Use -h for help \n"
@@ -179,13 +187,15 @@ proc main() =
   # Actions to run before native commands
   case action
   of actInstall:
+    debug "actInstall"
     let currentList = loadOrCreateRepoList(repoFile)
     var foundInManifest = false
 
     # Check if the app argument is already in the manifest
     for entry in currentList:
-      if entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii():
-        infoMsg("Found package \'", targetStr, "\' in manifest.")
+      if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
+         (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
+        debug "Found package \'", targetStr, "\' in manifest."
         foundInManifest = true
         let pkgName = entry.getOrDefault("pkg_name").getStr("")
         let manifestVer = entry.getOrDefault("version").getStr("")
@@ -222,8 +232,12 @@ proc main() =
           break
 
         else:
-          debug(pkgName & " [" & installedVer & "] is already current.")
-          break
+          styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
+          styledWrite(stdout, " is already the newest version ")
+          styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+
+          styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
+          quit(0)
 
     # If it's not in manifest but is a Git repo, add it then fetch it
     if not foundInManifest and getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
@@ -262,7 +276,8 @@ proc main() =
       removeGitRepo(targetStr)
       quit(0)
   of actListRepos:
-    styledEcho(fgWhite, styleBright, "System Repositories:", resetStyle)
+    debug "actListRepos"
+    styledEcho(fgWhite, styleBright, " System Repositories:", resetStyle)
   of actStatus:
     let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
     let (output, _) = execCmdEx(nativeCmd)

@@ -5,12 +5,17 @@
 #
 # ========================================================================================
 
-proc normalizeVersion(versionStr: string): string =
-  # Strips distro packaging suffixes (anything from '-' or '+' onwards)
+proc normalizeVersionBak(versionStr: string): string =
   let clean = versionStr.strip().toLowerAscii()
+
+  let startIdx = clean.find('-')
+  var base = if startIdx != -1: clean.substr(startIdx + 1) else: clean
+
   # Remove 'v' prefix if GitHub tags include it (e.g., v15.2.0)
-  let base = if clean.startsWith("v"): clean.substr(1) else: clean
-  
+  if base.startsWith("v"):
+    base = base.substr(1)
+
+  # Strip any trailing suffixes like -deb or +fc34
   let dashIdx = base.find('-')
   let plusIdx = base.find('+')
   
@@ -22,6 +27,30 @@ proc normalizeVersion(versionStr: string): string =
     return base.substr(0, plusIdx - 1)
   else:
     return base
+
+proc normalizeVersion(versionStr: string): string =
+  var base = versionStr.strip()
+
+  # 1. First, strip out known trailing distro markers by finding the first '+' or a '-' followed by a distro revision
+  # We can split by '+' first to get rid of things like '+dfsg-1' cleanly
+  if '+' in base:
+    base = base.split('+')[0]
+
+  # 2. Handle the package name vs version separation
+  # If there are dashes, we want to find the first piece that looks like a version number
+  if '-' in base:
+    let parts = base.split('-')
+    for part in parts:
+      if part.len > 0 and (part[0].isDigit or part.startsWith("v") or part.startsWith("V")):
+        base = part
+        break # Grab the first part that looks like a version string
+
+  # 3. Final normalization
+  base = base.toLowerAscii()
+  if base.startsWith("v"):
+    base = base.substr(1)
+    
+  return base
 
 proc getInstalledOSVersion(pkgMan, pkgName: string): string =
   ## Returns the version string natively installed on the host machine.
@@ -117,7 +146,7 @@ proc getPackageName(assetName, pkgExtension, repoPath: string): string =
   const suffixesToRemove = [
     "-musl", "-gnu", "-static", "-linux", "-unknown",
     "-x86_64", "-x86", "-amd64", "-arm64", "-aarch64", 
-    ".x86_64", ".amd64", ".aarch64"
+    ".x86_64", ".amd64", ".aarch64", "all"
   ]
   
   var changed = true
@@ -160,7 +189,7 @@ proc getPackageName(assetName, pkgExtension, repoPath: string): string =
       isPreReleaseTag or
       trailingPart.startsWith("v") or 
       trailingPart.len == 0 or
-      trailingPart in ["musl", "gnu", "static", "linux", "amd64", "arm64", "x86", "x86_64", "unknown"]
+      trailingPart in ["musl", "gnu", "static", "linux", "amd64", "arm64", "x86", "x86_64", "unknown", "all"]
 
     if isMetadataSegment:
       baseName = baseName.substr(0, lastSepIdx - 1)
@@ -169,96 +198,6 @@ proc getPackageName(assetName, pkgExtension, repoPath: string): string =
 
   # Fallback gracefully to the GitHub repository name if parsing clears out the string completely
   return if baseName.len > 0: baseName else: repoPath.split('/')[1]
-
-proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.async.} =
-  infoMsg("Fetching latest release for " & repoPath & "...")
-  let isAmd64 = hostCPU == "amd64"
-  let isArm64 = hostCPU == "arm64"
-  let url = "https://api.github.com/repos/" & repoPath & "/releases"
-  let client = newAsyncHttpClient()
-  client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
-  client.timeout = 30000
-
-  # Fallback return empty
-  result = (name: repoPath, pkgName: "", version: "", downloadUrl: "")
-
-  try:
-    debug "Scanning \'" & repoPath & "\' for releases..."
-    let response = await client.getContent(url)
-    let jsonNode = parseJson(response)
-
-    if jsonNode.len == 0:
-      warnMsg("No releases found for this repository.")
-      return result
-
-    for release in jsonNode:
-      let tagName = release["tag_name"].getStr()
-      let assets = release["assets"]
-      debug "found release: ", tagName
-
-      if assets.len == 0:
-        debug "No compiled assets found"
-        continue
-
-      var bestAsset: JsonNode = nil
-      var foundPreferred = false
-
-      for asset in assets:
-        let assetName = asset["name"].getStr()
-        let downloadUrl = asset["browser_download_url"].getStr()
-        debug "found asset: ", assetName
-
-        if assetName.endsWith("." & pkgExtension):
-          let matchesArch =
-            (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
-            (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
-            ("all" in assetName or "noarch" in assetName) or
-            (not isAmd64 and not isArm64 and hostCPU in assetName)
-
-          if matchesArch:
-            debug "Found matching assat: ", assetName
-            let isMusl = "musl" in assetName.toLowerAscii()
-
-            let isPreferredType = if preferMusl: isMusl else: not isMusl
-
-            # Scenario 1: First architectural match found
-            if bestAsset == nil:
-              bestAsset = asset
-              foundPreferred = isPreferredType
-
-            # Scenario 2: Upgrade fallback slot if we previously only had a musl asset
-            elif not foundPreferred and isPreferredType:
-              bestAsset = asset
-              foundPreferred = true
-              # We found a regular package, we can stop evaluating assets for this release
-              break
-
-      # If we successfully selected an asset out of this release block, process and return it
-      if bestAsset != nil:
-        let finalAssetName = bestAsset["name"].getStr()
-        let downloadUrl = bestAsset["browser_download_url"].getStr()
-
-        successMsg("Found installable package \'", finalAssetName, "\'")
-        let packageName = getPackageName(finalAssetName, pkgExtension, repoPath)
-
-        return (
-          name: repoPath,
-          pkgName: packageName,
-          version: tagName,
-          downloadUrl: downloadUrl,
-        )
-
-    warnMsg("Failed to find matching package for your architecture")
-    return result
-
-  except HttpRequestError as e:
-    errorMsg("Failed to fetch data: ", e.msg)
-  except JsonParsingError:
-    errorMsg("Failed to parse response. You might be rate-limited by GitHub API.")
-  except CatchableError as e:
-    errorMsg("Network error trying to get latest release for \'" & repoPath & "\': " & e.msg)
-  finally:
-    client.close()
 
 proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
   ## Downloads a file from the provided direct URL into a temporary cache folder.
@@ -289,6 +228,149 @@ proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
   except CatchableError as e:
     errorMsg("Failed to download package binary: " & e.msg)
     return ""
+  finally:
+    client.close()
+
+proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.async.} =
+  infoMsg("Fetching latest release for " & repoPath & "...")
+  let isAmd64 = hostCPU == "amd64"
+  let isArm64 = hostCPU == "arm64"
+  let url = "https://api.github.com/repos/" & repoPath & "/releases"
+  let client = newAsyncHttpClient()
+  client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
+  client.timeout = 30000
+
+  # Fallback return empty
+  result = (name: repoPath, pkgName: "", pkgType: pkgBinary, version: "", downloadUrl: "")
+
+  try:
+    debug "Scanning \'" & repoPath & "\' for releases..."
+    let response = await client.getContent(url)
+    let jsonNode = parseJson(response)
+
+    if jsonNode.len == 0:
+      warnMsg("No releases found for this repository.")
+      return result
+
+    var bestRelease: JsonNode = nil
+    var bestAsset: JsonNode = nil
+    var bestScore = -1 
+    var finalPkgType: PkgType = pkgBinary
+
+
+    # Search through releases (optionally prereleases)
+    for release in jsonNode:
+      let tagName = release["tag_name"].getStr().toLowerAscii()
+      debug "found release: ", tagName
+      let isPrerelease = release.getOrDefault("prerelease").getBool(false)
+      let assets = release["assets"]
+
+      if assets.len == 0:
+        debug "No compiled assets found"
+        continue
+
+      # Asset Release Weight (Base 0, 100, or 200)
+      var releaseScore = 200 # Default to Stable
+
+      if not includePrerelease:
+        if "nightly" in tagName or "dev" in tagName:
+          releaseScore = 0
+        elif isPrerelease or "beta" in tagName or "alpha" in tagName or "rc" in tagName or "preview" in tagName:
+          releaseScore = 100
+      else:
+        # If --include-prerelease is enabled, collapse all tiers to evaluate chronologically
+        releaseScore = 200
+
+      # If this release tier can't beat the current best score, skip it
+      if releaseScore + 30 + 5 < bestScore:
+        continue
+
+      # Search through assets
+      for asset in assets:
+        let assetName = asset["name"].getStr().toLowerAscii()
+        debug "found asset: ", assetName
+
+        # Asset Format Weight (0 to 30)
+        var formatScore = -1
+        var detectedType: PkgType
+
+        if pkgExtension.len > 0 and assetName.endsWith("." & pkgExtension):
+          let matchesArch =
+            (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
+            (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
+            ("all" in assetName or "noarch" in assetName) or
+            (not isAmd64 and not isArm64 and hostCPU in assetName)
+
+          if matchesArch:
+            debug "Found matching assat: ", assetName
+            detectedType = if pkgExtension == "deb": pkgDeb else: pkgRpm
+            formatScore = 30  # Highest priority format
+          else:
+            continue
+
+        elif assetName.endsWith(".appimage"):
+          detectedType = pkgAppImage
+          formatScore = 20  # Mid priority format
+
+        elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
+          warnMsg("Asset is not a valid package: ", assetName)
+          detectedType = pkgBinary
+          formatScore = 10  # Low priority binary archive
+        else:
+          continue # Skip documentation, shasums, or source code
+
+        # Prefered Lib Weight (0 or 5)
+        var libScore = 0
+        let isMusl = "musl" in assetName.toLowerAscii()
+
+        if preferMusl == isMusl:
+          libScore = 5
+
+        # Calculate Total Asset Score
+        let currentAssetScore = releaseScore + formatScore + libScore
+
+        if currentAssetScore > bestScore:
+          bestScore = currentAssetScore
+          bestRelease = release
+          bestAsset = asset
+          finalPkgType = detectedType
+
+          # Found stable, native, preferred-lib package
+          if bestScore == 235: 
+            break
+      # Found stable, native, preferred-lib package
+      if bestScore == 235:
+        break
+
+    # Process and return the best matching asset
+    if bestAsset != nil and bestRelease != nil:
+      let finalAssetName = bestAsset["name"].getStr()
+      debug "Selected payload: ", finalAssetName
+      debug "Asset Score: ", $bestScore
+
+      let downloadUrl = bestAsset["browser_download_url"].getStr()
+      let tagName = bestRelease["tag_name"].getStr()
+
+      successMsg("Found installable package \'", finalAssetName, "\'")
+      let packageName = getPackageName(finalAssetName, pkgExtension, repoPath)
+
+      return (
+        name: repoPath,
+        pkgName: packageName,
+        pkgType: finalPkgType,
+        version: normalizeVersion(tagName),
+        downloadUrl: downloadUrl,
+      )
+
+    warnMsg("Failed to find matching package for your architecture")
+    return result
+
+  except HttpRequestError as e:
+    errorMsg("Failed to fetch data: ", e.msg)
+  except JsonParsingError:
+    errorMsg("Failed to parse response. You might be rate-limited by GitHub API.")
+  except CatchableError as e:
+    errorMsg("Network error trying to get latest release for \'" & repoPath & "\': " & e.msg)
   finally:
     client.close()
 
@@ -550,7 +632,7 @@ proc listGitReposNew() =
     infoMsg("The repository list is empty.")
     return
 
-  styledWriteLine(stdout, fgWhite, styleBright, "Tracked Git Repositories:", resetStyle)
+  styledEcho(fgWhite, styleBright, "\nGit Repositories:", resetStyle)
 
   # Format Table Header for clarity
   let headRepo = "Repository"
@@ -576,7 +658,10 @@ proc listGitReposNew() =
         versionStr & "]"
 
 proc listGitRepos() =
-  styledEcho(fgWhite, styleBright, "\nGit Repositories:", resetStyle)
+  let termWidth = getTermWidth()
+  echo ""
+  styledEcho(fgWhite, styleBright, "Git Repositories:", resetStyle)
+
   if not fileExists(repoFile):
     warnMsg("Repository manifest not found.")
     return

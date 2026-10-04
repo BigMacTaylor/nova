@@ -70,8 +70,8 @@ proc parseAction(arg: string): Action =
   of "autoremove": actAutoremove
   of "refresh", "update": actRefresh
   of "upgrade": actUpgrade
-  of "add-repo", "add": actAddRepo
-  of "remove-repo": actRemoveRepo
+  of "repo-add", "add-repo", "add": actAddRepo
+  of "repo-remove", "remove-repo": actRemoveRepo
   of "list-repos": actListRepos
   of "list-installed": actListInstalled
   of "list-updates": actListUpdates

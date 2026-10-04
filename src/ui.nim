@@ -27,6 +27,12 @@ template infoMsg(args: varargs[untyped]) =
 template successMsg(args: varargs[untyped]) =
   styledWriteLine(stdout, fgGreen, "Success: ", resetStyle, args)
 
+proc getTermWidth(): int =
+  let padding = 1
+  var termWidth = terminalWidth() - padding
+  if termWidth <= 0:
+    termWidth = 80
+  return termWidth
 
 proc formatHelpString(text: string): string =
   const commands = [
