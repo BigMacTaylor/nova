@@ -300,13 +300,8 @@ proc main() =
   else:
     discard # Allow all other standard native manager actions to flow through cleanly
 
-  # Run native command
-  let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
-  debug "Executing: " & nativeCmd
-
-  let exitCode = execCmd(nativeCmd)
-  if exitCode != 0:
-    errorMsg("Native package manager exited with error code: ", $exitCode)
+  # Execute standard native commands
+  let exitCode = runNativeCommand(pkgMan, action, targetStr)
 
   # Actions to run after native commands
   case action
@@ -321,17 +316,11 @@ proc main() =
   else:
     discard
 
-  # If there was a temporary downloaded asset, clean it up
+  # Clean up file system caches
   if targetStr.contains(getTempDir()):
     discard tryRemoveFile(targetStr)
-
-    let uid = getuid()
-    let userCacheDir = getTempDir() / "nova-cache-" & $uid
-    if dirExists(userCacheDir):
-      try:
-        removeDir(userCacheDir)
-      except CatchableError:
-        discard
+    try: removeDir(getTempDir() / "nova-cache-" & $getuid())
+    except CatchableError: discard
         
   quit(exitCode)
 

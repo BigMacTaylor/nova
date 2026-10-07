@@ -196,5 +196,19 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     else: ""
 
   else:
-    errorMsg("Package manager '", pkgMan, "' does not support the requested action.")
+    errorMsg("Package manager '", pkgMan, "' is not currently supported.")
     quit(1)
+
+proc runNativeCommand(pkgMan: string, action: Action, targetStr: string): int =
+  # Get the native package manager command and execute it
+  let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
+  
+  if nativeCmd.len == 0:
+    errorMsg(pkgMan, " does not support the requested action.")
+    return 0
+
+  debug "Executing: " & nativeCmd
+
+  result = execCmd(nativeCmd)
+  if result != 0:
+    errorMsg("Native package manager exited with status code: ", $result)

@@ -39,7 +39,7 @@ proc detectSystemPackageManager(): string =
     return "unknown"
 
 proc getPackageManager(): string =
-  case getDistroId()
+  case getDistroId().toLowerAscii()
   of "ubuntu", "debian", "pop", "mint", "elementary", "kali", "raspbian", "neon",
       "zorin", "pureos", "parrot", "deepin", "mx", "antix", "devuan":
     if hasCommand("nala"):

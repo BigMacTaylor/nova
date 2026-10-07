@@ -214,6 +214,7 @@ proc addGitRepo(pkgMan, repoInput: string) {.async.} =
   let newEntry = %*{
     "repo": repoData.name,
     "pkg_name": repoData.pkgName,
+    "pkg_type": repoData.pkgType,
     "version": repoData.version,
     "download_url": repoData.downloadUrl,
   }
@@ -314,7 +315,7 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
 
     # Check if it's missing or out of date
     let isMissing = installedVer == ""
-    let isOutdated = (normalizeVersion(manifestVer) > normalizeVersion(installedVer)) and (manifestVer.len > 0)
+    let isOutdated = (manifestVer.len > 0) and (normalizeVersion(manifestVer) > normalizeVersion(installedVer))
 
     if isMissing or isOutdated:
       if isMissing:
@@ -405,7 +406,7 @@ proc listGitUpdates(pkgMan: string) =
 
     # Check if it's missing or out of date
     let isMissing = installedVer == ""
-    let isOutdated = (normalizeVersion(manifestVer) > normalizeVersion(installedVer)) and (manifestVer.len > 0)
+    let isOutdated = (manifestVer.len > 0) and (normalizeVersion(manifestVer) > normalizeVersion(installedVer))
 
     if isMissing or isOutdated:
       # Defer formatting header until we are certain an update row is active
@@ -433,41 +434,6 @@ proc listGitUpdates(pkgMan: string) =
     successMsg("All git packages are up to date.")
   else:
     echo "\nRun 'nova upgrade' to apply these updates.\n"
-
-proc listGitReposNew() =
-  if not fileExists(repoFile):
-    infoMsg("No repositories saved yet. \'" & repoFile & "\' does not exist.")
-    return
-
-  let repoList = loadOrCreateRepoList(repoFile)
-  if repoList.len == 0:
-    infoMsg("The repository list is empty.")
-    return
-
-  styledEcho(fgWhite, styleBright, "\nGit Repositories:", resetStyle)
-
-  # Format Table Header for clarity
-  let headRepo = "Repository"
-  let headPkg = "Package"
-  let headVer = "Version"
-  echo "  " & headRepo.alignLeft(30) & " " & headPkg.alignLeft(20) & " [" & headVer & "]"
-  echo "  " & "-".repeat(70)
-
-  for entry in repoList:
-    if entry.hasKey("repo") and entry.hasKey("version"):
-      let repoStr = entry["repo"].getStr()
-      let versionStr = entry["version"].getStr()
-
-      # Pull down the true native package name, fallback gracefully if not yet populated
-      let pkgStr =
-        if entry.hasKey("pkg_name"):
-          entry["pkg_name"].getStr()
-        else:
-          "unknown"
-
-      # Output aligned text components smoothly
-      echo "  • " & repoStr.alignLeft(28) & " " & pkgStr.alignLeft(20) & " [" &
-        versionStr & "]"
 
 proc listGitRepos() =
   let termWidth = getTermWidth()
