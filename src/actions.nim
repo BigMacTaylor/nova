@@ -23,7 +23,7 @@ proc handleInstallAction(pkgMan: string, targetStr: string) =
   let currentList = loadOrCreateRepoList(repoFile)
   var foundInManifest = false
 
-  # Check if the app argument is already in the manifest
+  # Check if target is already in the manifest
   for entry in currentList:
     if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
        (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
@@ -65,19 +65,14 @@ proc handleInstallAction(pkgMan: string, targetStr: string) =
         styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
         quit(0)
 
-  # If it's not in manifest but is a Git repo, add it then fetch it
+  # If target's not in manifest and it's a Git repo, add it then install
   if not foundInManifest and getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
-    if pkgMan notin ["apt", "nala", "dnf"]:
-      errorMsg(
-        "Direct Git package installation is currently only supported for APT and DNF."
-      )
-      quit(1)
-
     infoMsg("Interpreted target as Git repository.")
     waitFor addGitRepo(pkgMan, targetStr)
 
+    # Reload to capture the new addition
     let repoName = getRepoName(targetStr).toLowerAscii()
-    let updatedList = loadOrCreateRepoList(repoFile) # Reload to capture the new addition
+    let updatedList = loadOrCreateRepoList(repoFile)
 
     for entry in updatedList:
       if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
@@ -85,28 +80,24 @@ proc handleInstallAction(pkgMan: string, targetStr: string) =
         waitFor installPkg(pkgMan, entry)
         break
 
-
+# Actions to run before native commands
 proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
-  # Actions to run before native commands
+  debug "running pre exec actions"
   case action
   of actInstall:
-    debug "actInstall"
     handleInstallAction(pkgMan, targetStr)
 
   of actAddRepo:
-    debug "actAddRepo"
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       waitFor pkgMan.addGitRepo(targetStr)
       quit(0)
 
   of actRemoveRepo:
-    debug "actRemoveRepo"
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       removeGitRepo(targetStr)
       quit(0)
 
   of actListRepos:
-    debug "actListRepos"
     styledEcho(fgWhite, styleBright, " System Repositories:", resetStyle)
 
   of actStatus:
@@ -114,7 +105,7 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
     let (output, _) = execCmdEx(nativeCmd)
     parseAndPrintStatus(pkgMan, targetStr, output)
     quit(0)
-    
+
   of actInfo:
     let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
     let (output, exitCode) = execCmdEx(nativeCmd)
@@ -122,23 +113,20 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
       echo output.strip()
       quit(0)
     else:
-      warnMsg("Native entry missed. Cascading lookup down to global namespaces...")
+      warnMsg("Native lookup missed. Cascading down...")
       handleInfoFallback(targetStr)
       quit(0)
-  else:
-    discard # Allow all other standard native manager actions to flow through cleanly
 
+  else:
+    # Allow other standard actions to flow through cleanly
+    discard
 
 # Actions to run after native commands
 proc runPostExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
+  debug "running post exec actions"
   case action
-  of actRefresh:
-    waitFor refreshGitRepos(pkgMan)
-  of actUpgrade:
-    waitFor upgradeGitRepos(pkgMan)
-  of actListRepos:
-    listGitRepos()
-  of actListUpdates:
-    listGitUpdates(pkgMan)
-  else:
-    discard
+  of actRefresh:     waitFor refreshGitRepos(pkgMan)
+  of actUpgrade:     waitFor upgradeGitRepos(pkgMan)
+  of actListRepos:   listGitRepos()
+  of actListUpdates: listGitUpdates(pkgMan)
+  else: discard

@@ -47,16 +47,16 @@ proc formatHelpString(text: string): string =
   for line in text.splitLines():
     let trimmed = line.strip()
     
-    # 1. Skip completely empty lines or handle clean pass-throughs
+    # Skip completely empty lines or handle clean pass-throughs
     if line.len == 0 or trimmed.len == 0:
       resultLines.add(line)
       continue
 
-    # 2. Format Section Titles (e.g., "Usage:", "Options:", "Commands:")
+    # Format Section Titles (e.g., "Usage:", "Options:", "Commands:")
     if trimmed.endsWith(':'):
       resultLines.add(ANSI_BOLD & line & ANSI_RESET)
       
-    # 3. Format Flags (Lines starting with '-')
+    # Format Flags (Lines starting with '-')
     elif trimmed.startsWith('-'):
       let dashIdx = line.find('-')
       let leadingSpaces = if dashIdx != -1: line[0 ..< dashIdx] else: ""
@@ -70,11 +70,11 @@ proc formatHelpString(text: string): string =
       else:
         resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & trimmed & ANSI_RESET)
 
-    # 4. Handle Commands and Examples (Cleanly isolated inside 'else')
+    # Handle Commands and Examples
     else:
       let isExample = trimmed.startsWith("nova ")
       
-      # If it's an example, we temporarily strip "nova " to extract the underlying command
+      # If it's an example, temporarily strip "nova " to extract the underlying command
       let lookupString = if isExample: trimmed[5..^1] else: trimmed
       
       var matchedCommand = ""
