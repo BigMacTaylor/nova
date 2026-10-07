@@ -47,7 +47,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
   client.timeout = 30000
 
   # Fallback return empty
-  result = (name: repoPath, pkgName: "", pkgType: pkgBinary, version: "", downloadUrl: "")
+  result = (name: repoPath, pkgName: "", pkgType: Binary, version: "", downloadUrl: "")
 
   try:
     debug "Scanning \'" & repoPath & "\' for releases..."
@@ -61,8 +61,7 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
     var bestRelease: JsonNode = nil
     var bestAsset: JsonNode = nil
     var bestScore = -1 
-    var finalPkgType: PkgType = pkgBinary
-
+    var finalPkgType: PkgType = Binary
 
     # Search through releases (optionally prereleases)
     for release in jsonNode:
@@ -108,21 +107,42 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
             (not isAmd64 and not isArm64 and hostCPU in assetName)
 
           if matchesArch:
-            debug "Found matching assat: ", assetName
-            detectedType = if pkgExtension == "deb": pkgDeb else: pkgRpm
+            debug "Found matching asset: ", assetName
+            detectedType = if pkgExtension == "deb": Deb else: Rpm
             formatScore = 30  # Highest priority format
           else:
             continue
 
         elif assetName.endsWith(".appimage"):
-          detectedType = pkgAppImage
-          formatScore = 20  # Mid priority format
-          # TODO add appimage support
-          continue
+          let matchesArch =
+            (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
+            (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
+            (not isAmd64 and not isArm64 and hostCPU in assetName)
+
+          let isUniversal =
+            "universal" in assetName or 
+            "multi" in assetName or
+            not (assetName.contains("x86_64") or 
+              assetName.contains("amd64") or 
+              assetName.contains("arm64") or 
+              assetName.contains("aarch64") or 
+              assetName.contains("i386") or 
+              assetName.contains("armhf"))
+
+          if matchesArch:
+            debug "Found matching AppImage asset: ", assetName
+            detectedType = AppImage
+            formatScore = 20  # Mid priority format
+          elif isUniversal:
+            debug "Found universal AppImage asset: ", assetName
+            detectedType = AppImage
+            formatScore = 18  # Slightly lower score so exact matches win if present
+          else:
+            continue
 
         elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
           debug "Asset is not a valid package: ", assetName
-          detectedType = pkgBinary
+          detectedType = Binary
           formatScore = 10  # Low priority binary archive
           # TODO add binary support
           continue

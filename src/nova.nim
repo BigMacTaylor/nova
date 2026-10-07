@@ -36,13 +36,13 @@ type SourceType = enum
   srcGenericUrl
 
 type PkgType = enum
-  pkgDeb
-  pkgRpm
-  pkgAppImage
-  pkgFlatpak
-  pkgSnap
-  pkgBinary
-  pkgSource
+  Deb
+  Rpm
+  AppImage
+  Flatpak
+  Snap
+  Binary
+  Source
 
 type Repo = tuple
   name: string # GitHub Repository Name (e.g., "sharkdp/bat")
