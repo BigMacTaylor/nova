@@ -60,7 +60,7 @@ let repoFile = getDataDir() / "repositories.json"
 var preferMusl = false
 var includePrerelease = false
 
-include /[ui, commands, parsers, repo_man, pkg_man, status, actions]
+include /[ui, commands, parsers, packages, repo_man, pkg_man, status, actions]
 
 template printHelp() =
   const msg = """Nova:

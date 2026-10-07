@@ -53,14 +53,8 @@ proc handleInstallAction(pkgMan: string, targetStr: string) =
               ") ➡️ Tracked (" & manifestVer & ")"
           )
 
-        # Fetch the latest asset release from downloadUrl
-        let downloadedPayload = waitFor downloadLatestRelease(downloadUrl)
-
-        if downloadedPayload.len == 0 or not fileExists(downloadedPayload):
-          errorMsg("Failed to download package for your architecture")
-          quit(1)
-
-        #targetStr = downloadedPayload
+        # Install Package
+        waitFor installPkg(pkgMan, entry)
         break
 
       else:
@@ -87,14 +81,8 @@ proc handleInstallAction(pkgMan: string, targetStr: string) =
 
     for entry in updatedList:
       if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
-        let downloadUrl = entry["download_url"].getStr()
-        let downloadedPayload = waitFor downloadLatestRelease(downloadUrl)
-
-        if downloadedPayload.len == 0 or not fileExists(downloadedPayload):
-          errorMsg("Failed to download package for your architecture")
-          quit(1)
-
-        #targetStr = downloadedPayload
+        # Install Package
+        waitFor installPkg(pkgMan, entry)
         break
 
 

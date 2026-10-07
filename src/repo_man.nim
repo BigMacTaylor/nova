@@ -5,38 +5,6 @@
 #
 # ========================================================================================
 
-proc downloadLatestRelease(downloadUrl: string): Future[string] {.async.} =
-  ## Downloads a file from the provided direct URL into a temporary cache folder.
-  ## Returns the absolute path of the downloaded file, or "" if the download fails.
-
-  # Parse filename from the end of the download URL
-  let fileInfo = downloadUrl.splitFile()
-  let assetName = fileInfo.name & fileInfo.ext
-
-  if assetName.len == 0 or fileInfo.ext.len == 0:
-    errorMsg("Could not deduce a valid package filename from URL: " & downloadUrl)
-    return ""
-
-  infoMsg("Downloading package \'" & assetName & "\'...")
-  let client = newAsyncHttpClient()
-  client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
-  client.timeout = 30000
-
-  try:
-    let uid = getuid()
-    let cacheDir = getTempDir() / "nova-cache-" & $uid
-    createDir(cacheDir)
-    let destFile = cacheDir / assetName
-
-    await client.downloadFile(downloadUrl, destFile)
-    debug "Downloaded package to: " & destFile
-    return destFile
-  except CatchableError as e:
-    errorMsg("Failed to download package binary: " & e.msg)
-    return ""
-  finally:
-    client.close()
-
 proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.async.} =
   infoMsg("Fetching latest release from \'" & repoPath & "\'...")
   let isAmd64 = hostCPU == "amd64"
@@ -349,23 +317,9 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
             ") ➡️ Tracked (" & manifestVer & ")"
         )
 
-      # Fetch the latest asset release from downloadUrl
-      let downloadedPayload = await downloadLatestRelease(downloadUrl)
+      # Install Package
+      discard installPkg(pkgMan, entry)
 
-      if downloadedPayload.len > 0 and fileExists(downloadedPayload):
-        let installCmd = getNativeCommand(pkgMan, actInstall, downloadedPayload)
-        infoMsg("Executing native installer: " & installCmd)
-        let exitCode = execCmd(installCmd)
-
-        if downloadedPayload.contains(getTempDir()):
-          discard tryRemoveFile(downloadedPayload)
-
-        if exitCode == 0:
-          successMsg("Successfully installed package " & pkgName)
-        else:
-          errorMsg("Native package manager failed during execution for " & pkgName)
-      else:
-        errorMsg("Failed to download package " & pkgName)
     else:
       debug(pkgName & " [" & installedVer & "] is already current.")
 
