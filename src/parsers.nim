@@ -43,27 +43,167 @@ proc normalizeVersion*(asset: string): string =
 
   return "none"
 
-proc getInstalledOSVersion(pkgMan, pkgName: string): string =
+proc getNativeVersion(pkgMan, pkgName: string): string =
   ## Returns the version string natively installed on the host machine.
   ## Returns "" if the package is missing or not installed.
+  debug "getNativeVersion"
   let nativeCmd = getNativeCommand(pkgMan, actStatus, pkgName)
   let (output, exitCode) = execCmdEx(nativeCmd)
   let cleanOut = output.strip()
 
-  if exitCode == 0 and cleanOut.len > 0:
-    let components = cleanOut.split('|')
-    case pkgMan
-    of "apt", "nala":
-      # Your apt query format maps to: ${Status}|${Version}|${Installed-Size}
-      if components.len >= 2 and "installed" in components[0].toLowerAscii():
+  if exitCode != 0 or cleanOut.len == 0:
+    return ""
+
+  let components = cleanOut.split('|')
+  
+  case pkgMan
+  of "apt", "nala", "dnf":
+    # Outputs format: Status|Version|Size
+    if components.len >= 2 and "installed" in components[0].toLowerAscii():
+      return components[1].strip()
+
+  of "pacman":
+    # Output schema: Name|Version|Installed Size|
+    if components.len >= 2:
+      return components[1].strip()
+
+  of "zypper":
+    # Output schema: Yes (or No/status)|Version|Installed Size|
+    if components.len >= 2:
+      let isInstalled = components[0].strip().toLowerAscii()
+      if isInstalled in ["yes", "i", "installed"]:
         return components[1].strip()
-    of "dnf":
-      # Your dnf query format maps to: installed|%{VERSION}|%{SIZE}
-      if components.len >= 2 and components[0].strip() == "installed":
-        return components[1].strip()
-    else:
+
+  of "apk":
+    # Output layout: size-description|pkgname-version
+    # format from: apk info -s | tr '\n' '|'; apk info -v
+    if components.len >= 2:
+      let trailingPart = components[^1].strip() # Contains pkgname-version
+      if trailingPart.startsWith(pkgName & "-"):
+        return trailingPart[pkgName.len + 1 .. ^1]
+
+  of "xbps":
+    # Output layout: ii pkgname-version description
+    # xbps-query -W outputs plain metadata space-separated lines
+    let tokens = strutils.splitWhitespace(cleanOut)
+    if tokens.len >= 2 and tokens[0] == "ii":
+      let pkgAndVer = tokens[1]
+      if pkgAndVer.startsWith(pkgName & "-"):
+        return pkgAndVer[pkgName.len + 1 .. ^1]
+
+  of "emerge":
+    # Output layout: category/pkgname-version
+    # from qlist -Iv package
+    let lines = cleanOut.splitLines()
+    if lines.len > 0:
+      let matchingLine = lines[0].strip()
+      if '-' in matchingLine:
+        # Splits the slot/version details out from the package atom name
+        let parts = matchingLine.split('-')
+        if parts.len >= 2:
+          return matchingLine.split('-', 1)[1]
+
+  of "brew":
+    # Output schema: raw JSON via brew info --json=v2
+    try:
+      let jsonNode = parseJson(cleanOut)
+      let formulae = jsonNode.getOrDefault("formulae")
+      if formulae != nil and formulae.len > 0:
+        let linkedPkg = formulae[0].getOrDefault("linked_keg")
+        if linkedPkg.kind == JString and linkedPkg.getStr().len > 0:
+          return linkedPkg.getStr()
+    except CatchableError:
       discard
+
+  else:
+    discard
+
   return ""
+
+proc getAppImageMountVer(appImagePath: string): string =
+  ## Extracts the version string from an AppImage by mounting it via FUSE,
+  ## reading its .desktop file metadata, and cleanly unmounting it.
+  if not fileExists(appImagePath):
+    return ""
+
+  # Start the AppImage mount process in the background
+  # poStdErrToStdOut combines streams so we can catch early initialization errors
+  var process = startProcess(
+    command = appImagePath, 
+    args = ["--appimage-mount"], 
+    options = {poUsePath, poDaemon, poStdErrToStdOut}
+  )
+  
+  if process == nil:
+    return ""
+
+  var mountDir = ""
+  
+  try:
+    # Use standard File reading from the raw process output handle
+    var outFile: File
+    if open(outFile, process.outputHandle, fmRead):
+      # Read the first line safely (which contains the /tmp mount path)
+      mountDir = outFile.readLine().strip()
+      close(outFile) # Free handle lock
+
+    # Verify we got a valid directory path and wait briefly for FUSE to sync
+    if mountDir.len > 0 and dirExists(mountDir):
+      sleep(50) # Tiny synchronization window for the virtual file system loop
+      
+      # Scan the mount directory for the application's configuration .desktop file
+      for kind, path in walkDir(mountDir):
+        if kind == pcFile and path.endsWith(".desktop"):
+          for line in lines(path):
+            let cleanLine = line.strip()
+            if cleanLine.startsWith("X-AppImage-Version="):
+              let parts = cleanLine.split('=', 1)
+              if parts.len == 2:
+                result = parts[1].strip()
+                break
+          if result.len > 0: break
+
+  except CatchableError:
+    discard
+
+  finally:
+    # Safely close down background runtimes and eliminate zombie paths
+    process.terminate()
+    discard process.waitForExit()
+    process.close()
+
+  return result
+
+proc getAppImageVersion(appName: string): string =
+  ## Scrapes the static binary declaration of an AppImage payload 
+  ## to extract its internal version signature safely.
+  debug "get AppImage version"
+  let appsDir = os.getHomeDir() / ".local" / "bin"
+  let appImagePath = appsDir / appName
+
+  if not fileExists(appImagePath):
+    debug "AppImage file does not exist"
+    return ""
+
+  # Uses strings to extract the exact match without mounting/running code
+  let cmd = "strings " & quoteShell(appImagePath) & " | grep -m 1 '^X-AppImage-Version='"
+  let (output, exitCode) = execCmdEx(cmd)
+  
+  if exitCode == 0 and '=' in output:
+    return output.split('=', 1)[1].strip()
+
+  return getAppImageMountVer(appImagePath)
+
+proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
+  debug "get installed version"
+  case pkgType
+  of Deb, Rpm:
+    return normalizeVersion(getNativeVersion(pkgMan, pkgName))
+  of AppImage:
+    return normalizeVersion(getAppImageVersion(pkgName))
+  else:
+    debug "no version installed"
+    return "none"
 
 proc loadOrCreateRepoList(fileName: string): JsonNode =
   if fileExists(fileName):

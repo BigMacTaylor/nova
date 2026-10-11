@@ -5,6 +5,17 @@
 #
 # ========================================================================================
 
+proc printPkgStatus(pkgName, pkgVer, pkgSize: string) =
+  styledWriteLine(stdout, fgWhite, styleBright, "Package:   ", resetStyle, pkgName)
+  stdout.write "  Status:  "
+  if (pkgVer == "none") or (pkgVer == ""):
+    styledWriteLine(stdout, fgRed, styleBright, "Not Installed")
+  else:
+    styledWriteLine(stdout, fgGreen, styleBright, "Installed")
+  echo "  Version: " & pkgVer
+  echo "  Size:    " & pkgSize
+  echo ""
+
 proc formatBytes(bytesStr: string): string =
   try:
     let bytes = bytesStr.strip().parseInt()
@@ -19,7 +30,7 @@ proc formatBytes(bytesStr: string): string =
   except:
     return bytesStr.strip()
 
-proc parseAndPrintStatus(pkgMan: string, target: string, output: string) =
+proc printNativeStatus(pkgMan: string, target: string, output: string) =
   var isInstalled = false
   var version = "None"
   var size = "Unknown"
@@ -101,12 +112,43 @@ proc parseAndPrintStatus(pkgMan: string, target: string, output: string) =
     else:
       discard
 
-  styledWriteLine(stdout, fgWhite, styleBright, "Package:   ", resetStyle, target)
-  stdout.write "  Status:  "
-  if isInstalled:
-    styledWriteLine(stdout, fgGreen, styleBright, "Installed")
+  printPkgStatus(target, version, size)
+
+proc showPkgStatus(pkgMan: string, targetStr: string) =
+  let repoList = loadOrCreateRepoList(repoFile)
+  var installedVer = "none"
+
+  # Check if target is already in the manifest
+  for entry in repoList:
+    if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
+       (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
+      debug "Found package \'", targetStr, "\' in manifest."
+      let pkgName = entry.getOrDefault("pkg_name").getStr("")
+      let pkgType =
+        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+        except ValueError: Binary
+
+      if pkgType == Deb or pkgType == Rpm:
+        break
+
+      # Get currently installed version
+      installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+
+      # Check if it's not installed
+      if installedVer == "none":
+        debug "Package '" & pkgName & "' is not present on the host system."
+        break
+
+      printPkgStatus(pkgName, installedVer, "unknown")
+      return
+
+  # Check if target is natively installed package
+  let nativeCmd = getNativeCommand(pkgMan, actStatus, targetStr)
+  let (output, exitCode) = execCmdEx(nativeCmd)
+
+  debug "Exit Code: ", exitCode, " ", output
+
+  if exitCode == 0:
+    printNativeStatus(pkgMan, targetStr, output)
   else:
-    styledWriteLine(stdout, fgRed, styleBright, "Not Installed")
-  echo "  Version: " & version
-  echo "  Size:    " & size
-  echo ""
+    printPkgStatus(targetStr, "none", "unknown")

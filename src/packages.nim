@@ -125,9 +125,11 @@ proc initDesktopFile(pkgName: string, appPath: string) =
         let perms = getFilePermissions(destDesktopPath)
         setFilePermissions(destDesktopPath, perms + {fpUserRead, fpUserWrite, fpUserExec})
         successMsg("Successfully added .desktop file.")
+      else:
+        errorMsg("Failed to add .desktop file.")
 
   except CatchableError as e:
-    warnMsg("Asset lifecycle coordinator encountered an internal fallback: " & e.msg)
+    errorMsg("Failed to extract AppImage assets: " & e.msg)
   finally:
     setCurrentDir(currentDir)
     if dirExists(cacheWorkspace):
@@ -163,7 +165,7 @@ proc downloadPkg(downloadUrl: string): Future[string] {.async.} =
   finally:
     client.close()
 
-proc installPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
+proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   let pkgName = pkgEntry.getOrDefault("pkg_name").getStr("")
   let downloadUrl = pkgEntry.getOrDefault("download_url").getStr("")
   let pkgType =
@@ -240,3 +242,66 @@ proc installPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   of Binary, Source:
     warnMsg("Raw binary tarballs and structural build pipelines are not yet natively supported.")
 
+proc installPkg(pkgMan: string, targetStr: string) =
+  let currentList = loadOrCreateRepoList(repoFile)
+  var foundInManifest = false
+
+  # Check if target is already in the manifest
+  for entry in currentList:
+    if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
+       (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
+      debug "Found package \'", targetStr, "\' in manifest."
+      foundInManifest = true
+      let pkgName = entry.getOrDefault("pkg_name").getStr("")
+      let manifestVer = entry.getOrDefault("version").getStr("")
+      let downloadUrl = entry.getOrDefault("download_url").getStr("")
+      let pkgType =
+        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+        except ValueError: Binary
+
+      if pkgName.len == 0 or downloadUrl.len == 0:
+        debug "Skipping incomplete or malformed entry in manifest."
+        continue
+
+      # Get currently installed version
+      let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+
+      # Check if it's missing or out of date
+      let isMissing = installedVer == ""
+      let isStale = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
+
+      if isMissing or isStale:
+        if isMissing:
+          debug "Package '" & pkgName & "' is not present on the host system. Installing..."
+        else:
+          infoMsg(
+            "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
+              ") ➡️ Tracked (" & manifestVer & ")"
+          )
+
+        # Install Package
+        waitFor installGitPkg(pkgMan, entry)
+        break
+
+      else:
+        styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
+        styledWrite(stdout, " is already the newest version ")
+        styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+
+        styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
+        quit(0)
+
+  # If target's not in manifest and it's a Git repo, add it then install
+  if not foundInManifest and getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
+    infoMsg("Interpreted target as Git repository.")
+    waitFor addGitRepo(pkgMan, targetStr)
+
+    # Reload to capture the new addition
+    let repoName = getRepoName(targetStr).toLowerAscii()
+    let updatedList = loadOrCreateRepoList(repoFile)
+
+    for entry in updatedList:
+      if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
+        # Install Package
+        waitFor installGitPkg(pkgMan, entry)
+        break

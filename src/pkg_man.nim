@@ -61,21 +61,3 @@ proc getPackageManager(): string =
   else:
     return detectSystemPackageManager()
 
-proc parseAction(arg: string): Action =
-  case arg.toLowerAscii()
-  of "search": actSearch
-  of "install": actInstall
-  of "reinstall": actReinstall
-  of "remove", "rm": actRemove
-  of "autoremove": actAutoremove
-  of "refresh", "update": actRefresh
-  of "upgrade": actUpgrade
-  of "repo-add", "add-repo", "add": actAddRepo
-  of "repo-remove", "remove-repo": actRemoveRepo
-  of "list-repos": actListRepos
-  of "list-installed": actListInstalled
-  of "list-updates": actListUpdates
-  of "status", "stat": actStatus
-  of "show", "info": actInfo
-  of "history": actHistory
-  else: actUnknown

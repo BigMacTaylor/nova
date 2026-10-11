@@ -21,6 +21,7 @@ proc getSudoPrefix(): string =
 
 # Returns the specific command based on the package manager and action
 proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): string =
+  debug "getNativeCommand"
   let su = getSudoPrefix()
 
   case pkgMan
@@ -91,7 +92,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRefresh:       su & "pacman -Sy"
     of actUpgrade:       su & "pacman -Syu --noconfirm"
     of actInfo:          "pacman -Si " & target
-    of actStatus:        "pacman -Qi " & target & " 2>/dev/null | egrep 'Name|Version|Installed Size' | awk -F: '{print $2}' | sed 's/^[ \\t]*//' | tr '\\n' '|'"
+    of actStatus:        "pacman -Qi " & target & " 2>/dev/null | grep -E 'Name|Version|Installed Size' | awk -F: '{print $2}' | sed 's/^[ \\t]*//' | tr '\\n' '|'"
     of actAddRepo:       "echo 'Edit /etc/pacman.conf manually to append repositories.'"
     of actRemoveRepo:    "echo 'Edit /etc/pacman.conf manually to remove repositories.'"
     of actListRepos:     "grep -E '^\\[.' /etc/pacman.conf | grep -v 'options'"
@@ -110,7 +111,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRefresh:       su & "zypper ref"
     of actUpgrade:       su & "zypper up -y"
     of actInfo:          "zypper info " & target
-    of actStatus:        "zypper info " & target & " 2>/dev/null | egrep 'Installed|Version|Installed Size' | awk -F: '{print $2}' | sed 's/^[ \\t]*//' | tr '\\n' '|'"
+    of actStatus:        "zypper info " & target & " 2>/dev/null | grep -E 'Installed|Version|Installed Size' | awk -F: '{print $2}' | sed 's/^[ \\t]*//' | tr '\\n' '|'"
     of actAddRepo:       su & "zypper ar " & target
     of actRemoveRepo:    su & "zypper rr " & target
     of actListRepos:     "zypper lr"

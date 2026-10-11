@@ -20,6 +20,7 @@ type Action = enum
   actAutoremove
   actRefresh
   actUpgrade
+  actListVersions
   actListRepos
   actListInstalled
   actListUpdates
@@ -60,7 +61,8 @@ let repoFile = getDataDir() / "repositories.json"
 var preferMusl = false
 var includePrerelease = false
 
-include /[ui, commands, parsers, packages, repo_man, pkg_man, status, actions]
+proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.}
+include /[ui, commands, parsers, repo_man, packages, list, pkg_man, status, versions, actions]
 
 template printHelp() =
   const msg = """Nova:
@@ -160,9 +162,13 @@ proc main() =
   var targetStr = targets.join(" ")
   if action in {
     actAddRepo, actSearch, actInstall, actReinstall, actRemove, actRemoveRepo, actInfo,
-    actStatus,
+    actStatus, actListVersions,
   } and targetStr.len == 0:
     errorMsg("The '", firstAction, "' command requires at least one argument.")
+    quit(1)
+
+  if action in {actStatus, actListVersions} and targets.len > 1:
+    errorMsg("The '", firstAction, "' command only accepts one argument.")
     quit(1)
 
   let pkgMan = getPackageManager()

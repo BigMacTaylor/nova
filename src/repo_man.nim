@@ -5,7 +5,7 @@
 #
 # ========================================================================================
 
-proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.async.} =
+proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
   infoMsg("Fetching latest release from \'" & repoPath & "\'...")
   let isAmd64 = hostCPU == "amd64"
   let isArm64 = hostCPU == "arm64"
@@ -30,6 +30,11 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
     var bestAsset: JsonNode = nil
     var bestScore = -1 
     var finalPkgType: PkgType = Binary
+    let pkgExtension =
+      case pkgMan
+      of "apt", "nala": "deb"
+      of "dnf", "yum", "zypper": "rpm"
+      else: ""
 
     # Search through releases (optionally prereleases)
     for release in jsonNode:
@@ -63,40 +68,41 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
         let assetName = asset["name"].getStr().toLowerAscii()
         debug "Found asset: ", assetName
 
-        # Asset Format Weight (0 to 30)
+        # Prefered Format Weight (0 to 30)
         var formatScore = -1
         var detectedType: PkgType
 
-        if pkgExtension.len > 0 and assetName.endsWith("." & pkgExtension):
-          let matchesArch =
-            (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
-            (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
-            ("all" in assetName or "noarch" in assetName) or
-            (not isAmd64 and not isArm64 and hostCPU in assetName)
+        let matchesArch =
+          (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
+          (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
+          ("all" in assetName or "noarch" in assetName) or
+          (not isAmd64 and not isArm64 and hostCPU in assetName)
 
+        let isUniversal =
+          "universal" in assetName or 
+          "multi" in assetName or
+          not (assetName.contains("x86_64") or 
+            assetName.contains("amd64") or 
+            assetName.contains("arm64") or 
+            assetName.contains("aarch64") or 
+            assetName.contains("i386") or 
+            assetName.contains("armhf"))
+
+        # Native packages (.deb, .rpm)
+        if pkgExtension.len > 0 and assetName.endsWith("." & pkgExtension):
           if matchesArch:
             debug "Found matching asset: ", assetName
             detectedType = if pkgExtension == "deb": Deb else: Rpm
             formatScore = 30  # Highest priority format
+          elif isUniversal:
+            debug "Found universal asset: ", assetName
+            detectedType = if pkgExtension == "deb": Deb else: Rpm
+            formatScore = 28  # Slightly lower score so exact matches win if present
           else:
             continue
 
+        # Appimages
         elif assetName.endsWith(".appimage"):
-          let matchesArch =
-            (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
-            (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
-            (not isAmd64 and not isArm64 and hostCPU in assetName)
-
-          let isUniversal =
-            "universal" in assetName or 
-            "multi" in assetName or
-            not (assetName.contains("x86_64") or 
-              assetName.contains("amd64") or 
-              assetName.contains("arm64") or 
-              assetName.contains("aarch64") or 
-              assetName.contains("i386") or 
-              assetName.contains("armhf"))
-
           if matchesArch:
             debug "Found matching AppImage asset: ", assetName
             detectedType = AppImage
@@ -109,10 +115,10 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
             continue
 
         elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
+          # TODO add binary support
           debug "Asset is not a valid package: ", assetName
           detectedType = Binary
           formatScore = 10  # Low priority binary archive
-          # TODO add binary support
           continue
         else:
           continue # Skip documentation, shasums, or source code
@@ -174,45 +180,55 @@ proc getLatestRelease(repoPath: string, pkgExtension: string): Future[Repo] {.as
   finally:
     client.close()
 
-proc addGitRepo(pkgMan, repoInput: string) {.async.} =
-  let repoPath = getRepoName(repoInput)
-  if repoPath.len == 0 or not repoPath.contains("/"):
-    errorMsg("Invalid repository format. Use 'owner/repo' or a full GitHub URL.")
+proc upgradeGitRepos(pkgMan: string) {.async.} =
+  if not fileExists(repoFile):
+    warnMsg("Repository manifest not found. Skipping git packages.")
     return
 
   let repoList = loadOrCreateRepoList(repoFile)
+  if repoList.len == 0:
+    return
+
+  infoMsg("Checking installed packages against manifest...")
 
   for entry in repoList:
-    let entryRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
-    if entryRepo.len > 0 and entryRepo == repoPath.toLowerAscii():
-      infoMsg "Repository \'" & repoPath & "\' is already in manifest."
-      return
+    let pkgName = entry.getOrDefault("pkg_name").getStr("")
+    let manifestVer = entry.getOrDefault("version").getStr("")
+    let downloadUrl = entry.getOrDefault("download_url").getStr("")
+    let pkgType =
+      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+      except ValueError: Binary
 
-  let ext =
-    case pkgMan
-    of "apt", "nala": "deb"
-    of "dnf", "yum", "zypper": "rpm"
-    else: ""
+    if pkgName.len == 0 or downloadUrl.len == 0:
+      debug "Skipping incomplete or malformed entry in manifest."
+      continue
 
-  let repoData = await getLatestRelease(repoPath, ext)
-  if repoData.version == "":
-    errorMsg("Could not add repo \'" & repoPath & "\'")
-    quit(1)
+    # Get currently installed version
+    let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
 
-  let newEntry = %*{
-    "repo": repoData.name,
-    "pkg_name": repoData.pkgName,
-    "pkg_type": repoData.pkgType,
-    "version": repoData.version,
-    "download_url": repoData.downloadUrl,
-  }
-  repoList.add(newEntry)
+    # Check if it's missing or out of date
+    let isMissing = installedVer == ""
+    let isOutdated = (manifestVer.len > 0) and (manifestVer > installedVer)
 
-  try:
-    writeFile(repoFile, repoList.pretty())
-    successMsg("Added \'" & repoPath & "\' to manifest")
-  except IOError:
-    errorMsg("Could not save changes to manifest.")
+    if isMissing or isOutdated:
+      if isMissing:
+        infoMsg(
+          "Package '" & pkgName & "' is not present on the host system. Skipping..."
+        )
+        continue
+      else:
+        infoMsg(
+          "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
+            ") ➡️ Tracked (" & manifestVer & ")"
+        )
+
+      # Install Package
+      waitFor installGitPkg(pkgMan, entry)
+
+    else:
+      debug(pkgName & " [" & installedVer & "] is already current.")
+
+  successMsg("All git packages are up to date.")
 
 proc refreshGitRepos(pkgMan: string) {.async.} =
   if not fileExists(repoFile):
@@ -225,11 +241,6 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
     return
 
   infoMsg("Checking Git repos for updates...")
-  let ext =
-    case pkgMan
-    of "apt", "nala": "deb"
-    of "dnf", "yum", "zypper": "rpm"
-    else: ""
 
   var futures: seq[Future[Repo]] = @[]
   var mappedRepos: seq[JsonNode] = @[]
@@ -237,7 +248,7 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
   for entry in repoList:
     if entry.hasKey("repo"):
       let repoPath = entry["repo"].getStr()
-      futures.add(getLatestRelease(repoPath, ext))
+      futures.add(getLatestRelease(pkgMan, repoPath))
       mappedRepos.add(entry)
 
   try:
@@ -277,54 +288,6 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
   else:
     successMsg("All packages are already up to date!")
 
-proc upgradeGitRepos(pkgMan: string) {.async.} =
-  if not fileExists(repoFile):
-    warnMsg("Repository manifest not found. Skipping git packages.")
-    return
-
-  let repoList = loadOrCreateRepoList(repoFile)
-  if repoList.len == 0:
-    return
-
-  infoMsg("Checking installed packages against manifest...")
-
-  for entry in repoList:
-    let repoPath = entry.getOrDefault("repo").getStr("")
-    let pkgName = entry.getOrDefault("pkg_name").getStr("")
-    let manifestVer = entry.getOrDefault("version").getStr("")
-    let downloadUrl = entry.getOrDefault("download_url").getStr("")
-
-    if pkgName.len == 0 or downloadUrl.len == 0:
-      debug "Skipping incomplete or malformed entry in manifest."
-      continue
-
-    # Get currently installed version
-    let installedVer = getInstalledOSVersion(pkgMan, pkgName)
-
-    # Check if it's missing or out of date
-    let isMissing = installedVer == ""
-    let isOutdated = (manifestVer.len > 0) and (normalizeVersion(manifestVer) > normalizeVersion(installedVer))
-
-    if isMissing or isOutdated:
-      if isMissing:
-        infoMsg(
-          "Package '" & pkgName & "' is not present on the host system. Skipping..."
-        )
-        continue
-      else:
-        infoMsg(
-          "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
-            ") ➡️ Tracked (" & manifestVer & ")"
-        )
-
-      # Install Package
-      discard installPkg(pkgMan, entry)
-
-    else:
-      debug(pkgName & " [" & installedVer & "] is already current.")
-
-  successMsg("All git packages are up to date.")
-
 proc removeGitRepo(repoInput: string) =
   if not fileExists(repoFile):
     warnMsg("Repository manifest not found. Nothing to remove.")
@@ -351,80 +314,36 @@ proc removeGitRepo(repoInput: string) =
   else:
     errorMsg("Repository \'" & targetRepo & "\' not found.")
 
-proc listGitUpdates(pkgMan: string) =
-  if not fileExists(repoFile):
-    warnMsg("Repository manifest not found.")
+proc addGitRepo(pkgMan, repoInput: string) {.async.} =
+  let repoPath = getRepoName(repoInput)
+  if repoPath.len == 0 or not repoPath.contains("/"):
+    errorMsg("Invalid repository format. Use 'owner/repo' or a full GitHub URL.")
     return
 
   let repoList = loadOrCreateRepoList(repoFile)
-  if repoList.len == 0:
-    infoMsg("The repository manifest is empty.")
-    return
-
-  let headPkg = "Package Name"
-  let headInstalled = "Installed"
-  let headLatest = "Latest"
-
-  var updatesCount = 0
-  var headerPrinted = false
 
   for entry in repoList:
-    if not (entry.hasKey("repo") and entry.hasKey("pkg_name") and entry.hasKey("version")):
-      continue
+    let entryRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
+    if entryRepo.len > 0 and entryRepo == repoPath.toLowerAscii():
+      infoMsg "Repository \'" & repoPath & "\' is already in manifest."
+      return
 
-    let pkgName = entry["pkg_name"].getStr()
-    let manifestVer = entry["version"].getStr()
+  let repoData = await getLatestRelease(pkgMan, repoPath)
+  if repoData.version == "":
+    errorMsg("Could not add repo \'" & repoPath & "\'")
+    quit(1)
 
-    # Get currently installed version
-    let installedVer = getInstalledOSVersion(pkgMan, pkgName)
+  let newEntry = %*{
+    "repo": repoData.name,
+    "pkg_name": repoData.pkgName,
+    "pkg_type": repoData.pkgType,
+    "version": repoData.version,
+    "download_url": repoData.downloadUrl,
+  }
+  repoList.add(newEntry)
 
-    # Check if it's missing or out of date
-    let isMissing = installedVer == ""
-    let isOutdated = (manifestVer.len > 0) and (normalizeVersion(manifestVer) > normalizeVersion(installedVer))
-
-    if isMissing or isOutdated:
-      # Defer formatting header until we are certain an update row is active
-      if not headerPrinted:
-        styledWriteLine(
-          stdout, fgWhite, styleBright, "\nAvailable Updates for Git Applications:",
-          resetStyle,
-        )
-        echo "  " & headPkg.alignLeft(32) & " " & headInstalled.alignLeft(20) & " " &
-          headLatest
-        echo "  " & "-".repeat(68)
-        headerPrinted = true
-
-      if isMissing:
-        stdout.write "  " & pkgName.alignLeft(32)
-        styledWrite(stdout, fgYellow, "Not Installed".alignLeft(22))
-      else:
-        stdout.write "  " & pkgName.alignLeft(35)
-        styledWrite(stdout, styleBright, fgGreen, installedVer.alignLeft(19))
-
-      styledWriteLine(stdout, styleBright, fgBlue, " " & manifestVer)
-      inc(updatesCount)
-
-  if updatesCount == 0:
-    successMsg("All git packages are up to date.")
-  else:
-    echo "\nRun 'nova upgrade' to apply these updates.\n"
-
-proc listGitRepos() =
-  let termWidth = getTermWidth()
-  echo ""
-  styledEcho(fgWhite, styleBright, "Git Repositories:", resetStyle)
-
-  if not fileExists(repoFile):
-    warnMsg("Repository manifest not found.")
-    return
-
-  let repoList = loadOrCreateRepoList(repoFile)
-  if repoList.len == 0:
-    infoMsg("No repositories saved yet.")
-    return
-
-  for entry in repoList:
-    if entry.hasKey("repo") and entry.hasKey("version"):
-      let repoStr = entry["repo"].getStr()
-      echo "  ", repoStr
-  echo ""
+  try:
+    writeFile(repoFile, repoList.pretty())
+    successMsg("Added \'" & repoPath & "\' to manifest")
+  except IOError:
+    errorMsg("Could not save changes to manifest.")
