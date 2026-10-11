@@ -10,7 +10,7 @@ const version = "0.0.6"
 import std/[json, os, posix, osproc, strutils, asyncdispatch]
 import std/[httpclient, terminal, unicode, parseopt]
 
-type Action = enum
+type Action* = enum
   actSearch
   actAddRepo
   actInstall
@@ -29,14 +29,14 @@ type Action = enum
   actHistory
   actUnknown
 
-type SourceType = enum
+type SourceType* = enum
   srcLocalFile
   srcPpa
   srcGithubRepo
   srcGitlabRepo
   srcGenericUrl
 
-type PkgType = enum
+type PkgType* = enum
   Deb
   Rpm
   AppImage
@@ -45,7 +45,7 @@ type PkgType = enum
   Binary
   Source
 
-type Repo = tuple
+type Repo* = tuple
   name: string # GitHub Repository Name (e.g., "sharkdp/bat")
   pkgName: string # Native Package Name (e.g., "bat")
   pkgType: PkgType # Deb, Binary, AppImage etc.
