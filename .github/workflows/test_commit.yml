@@ -1,0 +1,42 @@
+name: Test Commits
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-lint:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Nim
+        uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: 'stable'
+
+      - name: Verify Code Formatting
+        run: |
+          echo "Checking code layout via nimpretty..."
+          nimpretty --check src/*.nim
+
+      - name: Install Dependencies
+        run: |
+          # If your testing suite requires third-party packages, declare them here.
+          # Example: If iffy/nim-argparse or other libraries are explicitly needed:
+          # nimble install -y argparse
+          discard "No third-party packages explicitly declared for parsing tests"
+
+      - name: Compile and Run Automated Tests
+        run: |
+          echo "Compiling functional test binary..."
+          # -d:release flag can be dropped here for faster iterative development feedback
+          nim c -r --colors:on tests/t_parser.nim
