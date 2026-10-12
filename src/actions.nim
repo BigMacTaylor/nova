@@ -39,6 +39,9 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
   of actInstall:
     installPkg(pkgMan, targetStr)
 
+  of actRemove:
+    removePkg(pkgMan, targetStr)
+
   of actAddRepo:
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       waitFor pkgMan.addGitRepo(targetStr)

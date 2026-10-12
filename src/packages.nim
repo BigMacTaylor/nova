@@ -5,6 +5,34 @@
 #
 # ========================================================================================
 
+proc removeDesktopFile(pkgName: string) =
+  let uid = getuid()
+
+  let userIconDir = os.getHomeDir() / ".local/share/icons/hicolor/256x256/apps"
+  let appsDir = os.getHomeDir() / ".local/share/applications"
+
+  let iconName = (if pkgName.len > 0: pkgName.toLowerAscii() else: "appimage-icon-" & $uid) & ".png"
+  let destIconPath = userIconDir / iconName
+
+  let desktopName = (if pkgName.len > 0: pkgName.toLowerAscii() else: "appimage-" & $uid) & ".desktop"
+  let destDesktopPath = appsDir / desktopName
+
+  # Safely attempt to remove the .desktop file
+  if fileExists(destDesktopPath):
+    try:
+      removeFile(destDesktopPath)
+      debug "Removed desktop shortcut: " & destDesktopPath
+    except OSError:
+      warnMsg("Could not remove desktop file: " & destDesktopPath)
+
+  # Safely attempt to remove the extracted .png icon
+  if fileExists(destIconPath):
+    try:
+      removeFile(destIconPath)
+      debug "Removed application icon: " & destIconPath
+    except OSError:
+      warnMsg("Could not remove icon file: " & destIconPath)
+
 proc initDesktopFile(pkgName: string, appPath: string) =
   ## Scan an AppImage package, and extract .desktop file if present
   ## Fall back to creating one
@@ -182,9 +210,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   case pkgType
   of Deb, Rpm:
     infoMsg("Installing native package...")
-
     let exitCode = runNativeCommand(pkgMan, actInstall, downloadPath)
-
     if exitCode == 0:
       successMsg("Successfully installed package \'" & pkgName & "\'")
       quit(0)
@@ -200,20 +226,20 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
       createDir(localBinDir)
 
     #let binaryName = if pkgName.len > 0: pkgName else: splitFile(downloadPath).name
-    let destPath = localBinDir / pkgName
+    let pkgPath = localBinDir / pkgName
 
     try:
       # Copy asset from temporary dir to local bin path
-      copyFile(downloadPath, destPath)
+      copyFile(downloadPath, pkgPath)
       
       # Add execution permissions (0o755)
-      let perms = getFilePermissions(destPath)
-      setFilePermissions(destPath, perms + {fpUserExec, fpGroupExec, fpOthersExec})
+      let perms = getFilePermissions(pkgPath)
+      setFilePermissions(pkgPath, perms + {fpUserExec, fpGroupExec, fpOthersExec})
 
-      successMsg("Successfully installed AppImage to " & destPath)
+      successMsg("Successfully installed AppImage to " & pkgPath)
       infoMsg("Ensure '" & localBinDir & "' is exported to your system $PATH ")
 
-      initDesktopFile(pkgName, destPath)
+      initDesktopFile(pkgName, pkgPath)
       quit(0)
 
     except CatchableError as e:
@@ -225,6 +251,69 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
 
   of Binary, Source:
     warnMsg("Raw binary tarballs and structural build pipelines are not yet natively supported.")
+
+proc removePkg(pkgMan: string, targetStr: string) =
+  debug "removePkg"
+  let repoList = loadOrCreateRepoList(repoFile)
+
+  # Check if target is already in the manifest
+  for entry in repoList:
+    if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
+       (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
+      debug "Found package \'", targetStr, "\' in manifest."
+    else:
+      break
+
+    let pkgName = entry.getOrDefault("pkg_name").getStr("")
+    let pkgType =
+      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+      except ValueError: Binary
+
+    # Get currently installed version
+    let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+    echo installedVer
+    if installedVer.len == 0:
+      errorMsg("Package '" & pkgName & "' is not installed.")
+      quit(1)
+
+    # Remove Packages by Type
+    case pkgType
+    of Deb, Rpm:
+      infoMsg("Uninstalling native package...")
+      let exitCode = runNativeCommand(pkgMan, actRemove, pkgName)
+      if exitCode == 0:
+        successMsg("Successfully uninstalled package \'" & pkgName & "\'")
+        quit(0)
+      else:
+        errorMsg("Failed to uninstall package \'" & pkgName & "\'")
+        quit(1)
+
+    of AppImage:
+      infoMsg("Uninstalling AppImage binary...")
+      let localBinDir = os.getHomeDir() / ".local" / "bin"
+      let pkgPath = localBinDir / pkgName
+
+      if fileExists(pkgPath):
+        try:
+          removeFile(pkgPath)
+          #repoList.delete(foundIndex)
+          # saveRepoList(repoFile, repoList) # Uncomment to save changes to file
+          debug "Successfully removed AppImage binary: " & pkgPath
+        except OSError:
+          errorMsg("Failed to delete AppImage binary: " & pkgPath)
+          quit(1)
+      else:
+        warnMsg("AppImage binary did not exist at: " & pkgPath)
+
+      removeDesktopFile(pkgName)
+      successMsg("Successfully removed \'" & pkgName & "\' from the system.")
+      quit(0)
+
+    of Flatpak, Snap:
+      warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
+
+    of Binary, Source:
+      warnMsg("Raw binary tarballs and structural build pipelines are not yet natively supported.")
 
 proc installPkg(pkgMan: string, targetStr: string) =
   let currentList = loadOrCreateRepoList(repoFile)
