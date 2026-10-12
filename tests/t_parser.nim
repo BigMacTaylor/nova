@@ -7,7 +7,7 @@ import ../src/nova
 # Repository Test Cases
 let repoNameTestCases = @[
   # Clean SSH Protocols
-  (input: "git@github.com:sharkdp/bat.git", expected: "sharkdp/batty"), # test
+  (input: "git@github.com:sharkdp/bat.git", expected: "sharkdp/bat"),
   (input: "git@gitlab.com:owner/my-project.git", expected: "owner/my-project"),
   
   # Standard HTTPS / HTTP URL Formats

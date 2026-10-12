@@ -45,23 +45,20 @@ proc getSnapVersion(pkgName: string): string =
   return ""
 
 proc listPkgVersions(pkgMan: string, targetStr: string) =
+  debug "listPkgVersions"
   let repoList = loadOrCreateRepoList(repoFile)
   var installedVer = ""
   var pkgName = targetStr
   var versions: seq[(PkgType, string)] = @[]
 
   # Check if target is natively installed package (Deb, Rpm)
-  let nativeCmd = getNativeCommand(pkgMan, actStatus, targetStr)
-  let (output, exitCode) = execCmdEx(nativeCmd)
-
-  if exitCode == 0 and output.len > 0:
-    let nativeVer = getNativeVersion(pkgMan, pkgName)
+  let nativeVer = normalizeVersion(getNativeVersion(pkgMan, pkgName))
+  if nativeVer.len > 0:
     let nativeType =
       case pkgMan
       of "apt", "nala": Deb
       of "dnf", "yum", "zypper": Rpm
       else: Binary
-
     versions.add((nativeType, nativeVer))
 
   # Check if target is already in the manifest

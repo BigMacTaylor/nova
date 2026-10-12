@@ -8,7 +8,7 @@
 proc printPkgStatus(pkgName, pkgVer, pkgSize: string) =
   styledWriteLine(stdout, fgWhite, styleBright, "Package:   ", resetStyle, pkgName)
   stdout.write "  Status:  "
-  if (pkgVer == "none") or (pkgVer == ""):
+  if (pkgVer.len == 0) or (pkgVer.toLower == "none"):
     styledWriteLine(stdout, fgRed, styleBright, "Not Installed")
   else:
     styledWriteLine(stdout, fgGreen, styleBright, "Installed")
@@ -31,8 +31,8 @@ proc formatBytes(bytesStr: string): string =
     return bytesStr.strip()
 
 proc printNativeStatus(pkgMan: string, target: string, output: string) =
-  var version = "None"
-  var size = "Unknown"
+  var version = "none"
+  var size = "unknown"
   let cleanOut = output.strip()
 
   if cleanOut.len > 0:
@@ -80,8 +80,8 @@ proc printNativeStatus(pkgMan: string, target: string, output: string) =
   printPkgStatus(target, version, size)
 
 proc showPkgStatus(pkgMan: string, targetStr: string) =
+  debug "showPkgStatus"
   let repoList = loadOrCreateRepoList(repoFile)
-  var installedVer = "none"
 
   # Check if target is already in the manifest
   for entry in repoList:
@@ -97,11 +97,9 @@ proc showPkgStatus(pkgMan: string, targetStr: string) =
         break
 
       # Get currently installed version
-      installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-
-      # Check if it's not installed
-      if installedVer == "none":
-        debug "Package '" & pkgName & "' is not present on the host system."
+      let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+      if installedVer.len == 0:
+        debug "Package '" & pkgName & "' not found on host system. Skipping..."
         break
 
       printPkgStatus(pkgName, installedVer, "unknown")
