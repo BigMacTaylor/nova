@@ -33,7 +33,6 @@ jobs:
           # If your testing suite requires third-party packages, declare them here.
           # Example: If iffy/nim-argparse or other libraries are explicitly needed:
           # nimble install -y argparse
-          discard "No third-party packages explicitly declared for parsing tests"
 
       - name: Compile and Run Automated Tests
         run: |
