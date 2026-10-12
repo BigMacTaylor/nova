@@ -6,18 +6,11 @@
 # ========================================================================================
 
 proc handleInfoFallback(target: string) =
-  var found = false
-  if hasCommand("flatpak"):
-    if execCmd("flatpak info " & target & " 2>/dev/null") == 0:
-      found = true
-  if not found and hasCommand("snap"):
-    if execCmd("snap info " & target & " 2>/dev/null") == 0:
-      found = true
-  if not found:
-    errorMsg(
-      "Could not find package info for '" & target & "' natively or via Flatpak/Snap."
-    )
-    quit(1)
+  for cmd in ["flatpak", "snap"]:
+    if hasCommand(cmd) and execCmd(cmd & " info " & target & " 2>/dev/null") == 0:
+      return
+  errorMsg("Could not find package info for \'", target, "\' natively or via Flatpak/Snap.")
+  quit(1)
 
 proc parseAction(arg: string): Action =
   case arg.toLowerAscii()

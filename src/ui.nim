@@ -34,6 +34,11 @@ proc getTermWidth(): int =
     termWidth = 80
   return termWidth
 
+proc printTableHeaders(title, col1, col2, col3: string) =
+  styledWriteLine(stdout, fgWhite, styleBright, title, resetStyle)
+  echo "  " & col1.alignLeft(30) & col2.alignLeft(20) & col3
+  echo "  " & "-".repeat(70)
+
 proc formatHelpString(text: string): string =
   const commands = [
     "search", "install", "reinstall", "remove", "autoremove", 

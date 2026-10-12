@@ -6,18 +6,10 @@
 # ========================================================================================
 
 proc getSudoPrefix(): string =
-  var suPrefix = ""
-
-  if isAdmin():
-    suPrefix = ""
-  elif findExe("doas").len > 0:
-    suPrefix = "doas "
-  elif findExe("sudo").len > 0:
-    suPrefix = "sudo "
-  else:
-    raise newException(OSError, "No privilege elevation tool (sudo/doas) found.")
-
-  return suPrefix
+  if isAdmin(): return ""
+  if findExe("doas").len > 0: return "doas "
+  if findExe("sudo").len > 0: return "sudo "
+  raise newException(OSError, "No privilege elevation tool (sudo/doas) found.")
 
 # Returns the specific command based on the package manager and action
 proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): string =
@@ -203,13 +195,11 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
 proc runNativeCommand(pkgMan: string, action: Action, targetStr: string): int =
   # Get the native package manager command and execute it
   let nativeCmd = getNativeCommand(pkgMan, action, targetStr)
-  
   if nativeCmd.len == 0:
     errorMsg(pkgMan, " does not support the requested action.")
     return 0
 
   debug "Executing: " & nativeCmd
-
   result = execCmd(nativeCmd)
   if result != 0:
     errorMsg("Native package manager exited with status code: ", $result)

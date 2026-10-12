@@ -9,13 +9,13 @@ proc normalizeVersion*(asset: string): string =
   var i = 0
   while i < asset.len:
     # Look for digits, or a 'v' followed by a digit
-    let isStartOfVersion = asset[i] in Digits or 
+    let isStart = asset[i] in Digits or 
       (asset[i] == 'v' and i + 1 < asset.len and asset[i+1] in Digits)
 
     # Ensure it's bounded by a standard separator not 'x86_64' or 'linux64'
     let isBounded = i == 0 or asset[i-1] in {'-', '_', '.', ' '}
 
-    if isStartOfVersion and isBounded:
+    if isStart and isBounded:
       # If it's a leading 'v', skip past it to keep the output purely numeric
       var nextIdx = i
       if asset[nextIdx] == 'v': inc(nextIdx)
@@ -41,7 +41,32 @@ proc normalizeVersion*(asset: string): string =
 
     inc(i)
 
-  return "none"
+  return ""
+
+proc compareVersionStrings*(v1, v2: string): int =
+  # Returns 1 if the first version is newer
+  # -1 if the second version is newer
+  let parts1 =
+    if v1.len > 0: v1.split('.').map(parseInt)
+    else: @[0, 0, 0]
+  let parts2 =
+    if v2.len > 0: v2.split('.').map(parseInt)
+    else: @[0, 0, 0]
+  let maxLen = max(parts1.len, parts2.len)
+
+  for i in 0 ..< maxLen:
+    # If one version has fewer segments (e.g., "1.0" vs "1.0.1")
+    # Missing segments are safely evaluated as 0. 
+    let
+      num1 = if i < parts1.len: parts1[i] else: 0
+      num2 = if i < parts2.len: parts2[i] else: 0
+    if num1 < num2:
+      return -1
+    elif num1 > num2:
+      return 1
+
+  # Both versions are equal
+  return 0
 
 proc getNativeVersion(pkgMan, pkgName: string): string =
   ## Returns the version string natively installed on the host machine.
@@ -120,7 +145,7 @@ proc getNativeVersion(pkgMan, pkgName: string): string =
 
   return ""
 
-proc getAppImageMountVer(appImagePath: string): string =
+proc getMountAppImageVer(appImagePath: string): string =
   ## Extracts the version string from an AppImage by mounting it via FUSE,
   ## reading its .desktop file metadata, and cleanly unmounting it.
   if not fileExists(appImagePath):
@@ -128,49 +153,62 @@ proc getAppImageMountVer(appImagePath: string): string =
 
   # Start the AppImage mount process in the background
   # poStdErrToStdOut combines streams so we can catch early initialization errors
-  var process = startProcess(
-    command = appImagePath, 
-    args = ["--appimage-mount"], 
-    options = {poUsePath, poDaemon, poStdErrToStdOut}
-  )
-  
-  if process == nil:
-    return ""
-
-  var mountDir = ""
-  
+  var process: Process = nil
   try:
-    # Use standard File reading from the raw process output handle
+    process = startProcess(
+      command = appImagePath, 
+      args = ["--appimage-mount"], 
+      options = {poUsePath, poDaemon, poStdErrToStdOut}
+    )
+  
+    if process == nil:
+      return ""
+
+    var mountDir = ""
     var outFile: File
+
     if open(outFile, process.outputHandle, fmRead):
       # Read the first line safely (which contains the /tmp mount path)
-      mountDir = outFile.readLine().strip()
-      close(outFile) # Free handle lock
+      try:
+        mountDir = outFile.readLine().strip()
+      finally:
+        close(outFile) # Unconditionally closes the handle even if readLine fails
 
-    # Verify we got a valid directory path and wait briefly for FUSE to sync
-    if mountDir.len > 0 and dirExists(mountDir):
-      sleep(50) # Tiny synchronization window for the virtual file system loop
-      
-      # Scan the mount directory for the application's configuration .desktop file
-      for kind, path in walkDir(mountDir):
-        if kind == pcFile and path.endsWith(".desktop"):
-          for line in lines(path):
-            let cleanLine = line.strip()
-            if cleanLine.startsWith("X-AppImage-Version="):
-              let parts = cleanLine.split('=', 1)
-              if parts.len == 2:
-                result = parts[1].strip()
-                break
-          if result.len > 0: break
+    # Verify we got a valid directory path and wait for FUSE to sync
+    if mountDir.len > 0:
+      var retries = 0
+      while retries < 50 and not dirExists(mountDir):
+        sleep(25)
+        inc(retries)
+
+      if dirExists(mountDir):
+        # Scan the mount directory for the application's configuration .desktop file
+        for kind, path in walkDir(mountDir):
+          if kind == pcFile and path.endsWith(".desktop"):
+            try:
+              for line in lines(path):
+                let cleanLine = line.strip()
+                if cleanLine.startsWith("X-AppImage-Version="):
+                  let parts = cleanLine.split('=', 1)
+                  if parts.len == 2:
+                    result = parts[1].strip()
+                    break
+            except CatchableError:
+              discard # individual file IO failures
+            if result.len > 0: break
 
   except CatchableError:
     discard
 
   finally:
-    # Safely close down background runtimes and eliminate zombie paths
-    process.terminate()
-    discard process.waitForExit()
-    process.close()
+    if process != nil:
+      try:
+        process.terminate()
+        discard process.waitForExit(timeout = 500)
+      except CatchableError:
+        discard
+      finally:
+        process.close()
 
   return result
 
@@ -192,7 +230,7 @@ proc getAppImageVersion(appName: string): string =
   if exitCode == 0 and '=' in output:
     return output.split('=', 1)[1].strip()
 
-  return getAppImageMountVer(appImagePath)
+  return getMountAppImageVer(appImagePath)
 
 proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
   debug "get installed version"
@@ -202,8 +240,8 @@ proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
   of AppImage:
     return normalizeVersion(getAppImageVersion(pkgName))
   else:
-    debug "no version installed"
-    return "none"
+    debug "no installed version found"
+    return ""
 
 proc loadOrCreateRepoList(fileName: string): JsonNode =
   if fileExists(fileName):
@@ -243,11 +281,15 @@ proc getSourceType*(target: string): SourceType =
     return srcGenericUrl
 
 proc getRepoName*(target: string): string =
+  # Edge Cases
+  if not target.contains('/'):
+    return ""
+
   var clean = target.strip().strip(chars = {'/', '\\'})
   if clean.len == 0:
     return ""
 
-  let prefixes = [
+  const prefixes = [
     "https://github.com", "http://github.com", "github.com",
     "git@github.com:", "://://github.com", "://github.com",
     "https://gitlab.com", "http://gitlab.com", "gitlab.com",
@@ -296,11 +338,12 @@ proc getRepoName*(target: string): string =
 proc findVersionStart(asset: string): int =
   var i = 0
   while i < asset.len:
-    let isStartOfVersion = asset[i] in Digits or 
-                           (asset[i] == 'v' and i + 1 < asset.len and asset[i+1] in Digits)
+    let isStart =
+      (asset[i] in Digits) or
+      (asset[i] == 'v' and i + 1 < asset.len and asset[i+1] in Digits)
     let isBounded = i == 0 or asset[i-1] in {'-', '_', '.', ' '}
-    
-    if isStartOfVersion and isBounded:
+
+    if isStart and isBounded:
       let startIdx = i
       var iMove = i
       if asset[iMove] == 'v': inc(iMove)
@@ -318,15 +361,14 @@ proc findVersionStart(asset: string): int =
 proc cleanKeywords(name: string): string =
   ## Drops architectural noise and platform descriptors from unversioned regions
   result = name
-  for keyword in [
-    "-linux", "_linux", "-x86", "_x86", "-arm", "_arm", "-riscv", "-anylinux", 
-    "-musl", "_musl", "-static", "_static", "-gnu", "_gnu", "-unknown", "_unknown"
-  ]:
+  const keywords = ["-linux", "_linux", "-x86", "_x86", "-arm", "_arm", "-riscv", "-anylinux", 
+    "-musl", "_musl", "-static", "_static", "-gnu", "_gnu", "-unknown", "_unknown"]
+  for keyword in keywords:
     let idx = result.find(keyword)
     if idx > 0:
       result = result[0 ..< idx]
 
-proc getPackageName*(asset, pkgExtension, repoPath: string): string =
+proc getPackageName*(asset: string): string =
   # Edge Case: Pure version strings
   let isPureVer = asset[0] in Digits or (asset[0] == 'v' and asset.len > 1 and asset[1] in Digits)
   if isPureVer:

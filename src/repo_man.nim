@@ -146,7 +146,7 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
       if bestScore > 210:
         break
       else:
-        warnMsg("Could not find package for your architecture.")
+        debug "Package score: ", bestScore, ". Skipping..."
 
     # Process and return the best matching asset
     if bestAsset != nil and bestRelease != nil:
@@ -158,7 +158,7 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
       let tagName = bestRelease["tag_name"].getStr()
 
       successMsg("Found installable package \'", finalAssetName, "\'")
-      let packageName = getPackageName(finalAssetName, pkgExtension, repoPath)
+      let packageName = getPackageName(finalAssetName)
 
       return (
         name: repoPath,
@@ -168,7 +168,7 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
         downloadUrl: downloadUrl,
       )
 
-    errorMsg("Failed to find matching package for your architecture.")
+    errorMsg("Could not find package for your architecture.")
     return result
 
   except HttpRequestError as e:
@@ -205,22 +205,15 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
 
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+    if installedVer.len == 0:
+      debug "Package '" & pkgName & "' not found on host system. Skipping..."
+      continue
 
-    # Check if it's missing or out of date
-    let isMissing = installedVer == ""
-    let isOutdated = (manifestVer.len > 0) and (manifestVer > installedVer)
-
-    if isMissing or isOutdated:
-      if isMissing:
-        infoMsg(
-          "Package '" & pkgName & "' is not present on the host system. Skipping..."
-        )
-        continue
-      else:
-        infoMsg(
-          "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
-            ") ➡️ Tracked (" & manifestVer & ")"
-        )
+    # Check if it's out of date
+    if compareVersionStrings(manifestVer, installedVer) == 1:
+      infoMsg(
+        "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
+          ") ➡️ Tracked (" & manifestVer & ")")
 
       # Install Package
       waitFor installGitPkg(pkgMan, entry)

@@ -29,7 +29,7 @@ proc getFlatpakVersion(pkgName: string): string =
   let (output, exitCode) = execCmdEx("flatpak info --show-version " & pkgName)
   if exitCode == 0 and output.strip.len > 0:
     return output.strip
-  return "none"
+  return ""
 
 proc getSnapVersion(pkgName: string): string =
   ## Queries snap list to find the version of a specific package
@@ -42,11 +42,11 @@ proc getSnapVersion(pkgName: string): string =
       let parts = strutils.splitWhitespace(lines[1])
       if parts.len > 1:
         return parts[1] # The version column
-  return "none"
+  return ""
 
 proc listPkgVersions(pkgMan: string, targetStr: string) =
   let repoList = loadOrCreateRepoList(repoFile)
-  var installedVer = "none"
+  var installedVer = ""
   var pkgName = targetStr
   var versions: seq[(PkgType, string)] = @[]
 
@@ -85,18 +85,18 @@ proc listPkgVersions(pkgMan: string, targetStr: string) =
       installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
 
       # Check if it's missing
-      if installedVer != "none":
+      if installedVer != "":
         versions.add((pkgType, installedVer)) 
       break
 
   # Check for Flatpak Installation
   let flatpakVer = getFlatpakVersion(pkgName)
-  if flatpakVer != "none":
+  if flatpakVer != "":
     versions.add((Flatpak, flatpakVer))
 
   # Check for Snap Installation
   let snapVer = getSnapVersion(pkgName)
-  if snapVer != "none":
+  if snapVer != "":
     versions.add((Snap, snapVer))
 
   printPkgVersions(pkgName, versions)

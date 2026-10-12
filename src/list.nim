@@ -16,11 +16,6 @@ proc listGitUpdates(pkgMan: string) =
     infoMsg("The repository manifest is empty.")
     return
 
-  # Format Table Headers
-  let headPkg = "Package Name"
-  let headInstalled = "Installed"
-  let headLatest = "Latest"
-
   var updatesCount = 0
   var headerPrinted = false
 
@@ -36,29 +31,25 @@ proc listGitUpdates(pkgMan: string) =
 
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+    if installedVer.len == 0:
+      debug "Package '" & pkgName & "' not found on host system. Skipping..."
+      continue
 
-    # Check if it's missing or out of date
-    let isMissing = installedVer == ""
-    let isOutdated = (manifestVer.len > 0) and (manifestVer > installedVer)
-
-    if isMissing or isOutdated:
-      # Defer formatting header until we are certain an update row is active
+    # Check if it's out of date
+    if compareVersionStrings(manifestVer, installedVer) == 1:
+      # Defer printing header until an update row is active
       if not headerPrinted:
-        styledWriteLine(
-          stdout, fgWhite, styleBright, "Available Updates for Git Applications:",
-          resetStyle,
+        printTableHeaders(
+          "Available Updates for Git Applications:",
+          "Package",
+          "Current",
+          "Latest",
         )
-        echo "  " & headPkg.alignLeft(30), headInstalled.alignLeft(20), headLatest
-        echo "  " & "-".repeat(70)
         headerPrinted = true
 
-      if isMissing:
-        stdout.write "  • " & pkgName.alignLeft(28)
-        styledWrite(stdout, fgYellow, "Not Installed".alignLeft(20))
-      else:
-        stdout.write "  • " & pkgName.alignLeft(28)
-        styledWrite(stdout, styleBright, fgGreen, installedVer.alignLeft(20))
-
+      # Output formatted text
+      stdout.write "  • " & pkgName.alignLeft(28)
+      styledWrite(stdout, styleBright, fgGreen, installedVer.alignLeft(20))
       styledWriteLine(stdout, styleBright, fgBlue, manifestVer)
       inc(updatesCount)
 
@@ -74,20 +65,17 @@ proc listGitRepos(pkgMan: string) =
     warnMsg("Repository manifest not found.")
     return
 
-  styledEcho(fgWhite, styleBright, "Git Repositories:", resetStyle)
-
   let repoList = loadOrCreateRepoList(repoFile)
   if repoList.len == 0:
-    infoMsg("  No repositories saved yet.")
+    infoMsg("No git repositories saved yet.")
     return
 
-  # Format Table Headers
-  let headRepo = "Repository"
-  let headPkg = "Package"
-  let headStat = "Status"
-
-  echo "  " & headRepo.alignLeft(30), headPkg.alignLeft(20), headStat
-  echo "  " & "-".repeat(70)
+  printTableHeaders(
+    "Git Repositories:",
+    "Repository",
+    "Package",
+    "Status",
+  )
 
   for entry in repoList:
     if entry.hasKey("repo") and entry.hasKey("version"):
@@ -108,7 +96,7 @@ proc listGitRepos(pkgMan: string) =
       #styledWriteLine(stdout, fgYellow, "[" & $pkgType & "]")
 
       # Check if it's installed or not
-      if (pkgVer == "none") or (pkgVer == ""):
+      if pkgVer == "":
         styledWriteLine(stdout, fgYellow, "[Not Installed]")
       else:
         styledWriteLine(stdout, fgYellow, "[Installed]")
@@ -142,20 +130,17 @@ proc listGitPkgs(pkgMan: string) =
     warnMsg("Repository manifest not found.")
     return
 
-  styledEcho(fgWhite, styleBright, "Git Packages:", resetStyle)
-
   let repoList = loadOrCreateRepoList(repoFile)
   if repoList.len == 0:
-    infoMsg("  No packages installed yet.")
+    infoMsg("No git packages installed yet.")
     return
 
-  # Format Table Headers
-  let headPkg = "Package"
-  let headVer = "Version"
-  let headType = "Type"
-
-  echo "  " & headPkg.alignLeft(30), headVer.alignLeft(20), headType
-  echo "  " & "-".repeat(70)
+  printTableHeaders(
+    "Git Packages:",
+    "Package",
+    "Version",
+    "Type",
+  )
 
   for entry in repoList:
     if entry.hasKey("repo") and entry.hasKey("version"):
@@ -171,11 +156,11 @@ proc listGitPkgs(pkgMan: string) =
       let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
 
       # Check if it's installed or not
-      if installedVer == "none":
+      if installedVer == "":
         debug "Package '" & pkgName & "' is not present on the host system."
         continue
 
-      # Output aligned text
+      # Output formatted text
       #echo "  • " & pkgName.alignLeft(28), installedVer.alignLeft(20), "[" & $pkgType & "]"
       stdout.write "  • " & pkgName.alignLeft(28)
       #styledWrite(stdout, styleBright, fgGreen, pkgName.alignLeft(28))

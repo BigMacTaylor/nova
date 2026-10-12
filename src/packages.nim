@@ -10,13 +10,13 @@ proc initDesktopFile(pkgName: string, appPath: string) =
   ## Fall back to creating one
   debug "init desktop file started"
   let uid = getuid()
-  let userIconDir = os.getHomeDir() / ".local" / "share" / "icons" / "hicolor" / "256x256" / "apps"
-  let appsDir = os.getHomeDir() / ".local" / "share" / "applications"
+  let userIconDir = os.getHomeDir() / ".local/share/icons/hicolor/256x256/apps"
+  let appsDir = os.getHomeDir() / ".local/share/applications"
 
-  let finalIconName = (if pkgName.len > 0: pkgName.toLowerAscii() else: "appimage-icon-" & $uid) & ".png"
-  let destIconPath = userIconDir / finalIconName
-  let finalDesktopName = (if pkgName.len > 0: pkgName.toLowerAscii() else: "appimage-" & $uid) & ".desktop"
-  let destDesktopPath = appsDir / finalDesktopName
+  let iconName = (if pkgName.len > 0: pkgName.toLowerAscii() else: "appimage-icon-" & $uid) & ".png"
+  let destIconPath = userIconDir / iconName
+  let desktopName = (if pkgName.len > 0: pkgName.toLowerAscii() else: "appimage-" & $uid) & ".desktop"
+  let destDesktopPath = appsDir / desktopName
 
   for directory in [userIconDir, appsDir]:
     if not dirExists(directory):
@@ -28,30 +28,26 @@ proc initDesktopFile(pkgName: string, appPath: string) =
     return
 
   let cacheWorkspace = getTempDir() / "nova-asset-extract-" & $uid
-  let currentDir = getCurrentDir()
-
   if dirExists(cacheWorkspace):
     try: removeDir(cacheWorkspace)
     except CatchableError: discard
-  try: createDir(cacheWorkspace)
-  except CatchableError: return
-
-  var extractedDesktopPath = ""
-  var bestIconPath = ""
-  var fallbackIconPath = ""
+  createDir(cacheWorkspace)
 
   try:
     # AppImages extract strictly to a folder named "squashfs-root" in the current directory
-    setCurrentDir(cacheWorkspace)
-    let extractCode = execCmd(appPath & " --appimage-extract >/dev/null 2>&1")
+    let extractCmd = "cd " & cacheWorkspace & " && " & appPath & " --appimage-extract >/dev/null 2>&1"
+    let extractCode = execCmd(extractCmd)
     let rootPath = cacheWorkspace / "squashfs-root"
 
     if extractCode == 0 and dirExists(rootPath):
       # XDG AppImages store their primary desktop icon right in the top layer of the squashfs root
       # Search for the best available PNG file inside the extracted target workspace
+      var extractedDesktopPath = ""
+      var bestIconPath = ""
+      var fallbackIconPath = ""
+
       for path in walkDirRec(rootPath, yieldFilter = {pcFile, pcLinkToFile}):
         let lowerPath = path.toLowerAscii()
-        
         if lowerPath.endsWith(".desktop"):
           extractedDesktopPath = path
         elif lowerPath.endsWith(".png"):
@@ -62,33 +58,22 @@ proc initDesktopFile(pkgName: string, appPath: string) =
 
       # Resolve symbolic links to absolute hard targets before deletion 
       let rawSelectedIcon = if bestIconPath.len > 0: bestIconPath else: fallbackIconPath
-      var verifiedRealIcon = ""
+      let verifiedRealIcon =
+        # expandFilename automatically follows symlinks and resolves their true location
+        try: os.expandFilename(rawSelectedIcon)
+        except CatchableError: rawSelectedIcon
 
-      if rawSelectedIcon.len > 0:
-        try:
-          # expandFilename automatically follows symlinks and resolves their true physical location
-          verifiedRealIcon = os.expandFilename(rawSelectedIcon)
-          debug "Resolved icon target path cleanly: " & verifiedRealIcon
-        except CatchableError:
-          # Fallback safely if it's already a standard file
-          verifiedRealIcon = rawSelectedIcon
-
-      # Mirror the true extracted graphic artifact out to your profile cache
       if verifiedRealIcon.len > 0 and fileExists(verifiedRealIcon):
-        try:
-          copyFile(verifiedRealIcon, destIconPath)
-          debug "Successfully copied resolved icon file: " & destIconPath
-        except CatchableError as e:
-          debug "Icon cloning error bypassed: " & e.msg
+        try: copyFile(verifiedRealIcon, destIconPath)
+        except CatchableError: discard
 
       # Process Desktop Configuration
       if extractedDesktopPath.len > 0 and fileExists(extractedDesktopPath):
         var updatedLines: seq[string] = @[]
         for line in lines(extractedDesktopPath):
-          let strippedLine = line.strip()
-          if strippedLine.startsWith("Exec="):
+          if line.strip().startsWith("Exec="):
             updatedLines.add("Exec=\"" & appPath & "\"")
-          elif strippedLine.startsWith("Icon="):
+          elif line.strip().startsWith("Icon="):
             updatedLines.add("Icon=" & pkgName.toLowerAscii())
           else:
             updatedLines.add(line)
@@ -98,9 +83,9 @@ proc initDesktopFile(pkgName: string, appPath: string) =
       else:
         # Capitalize first letter cleanly for display format name fields
         let displayName =
-          if pkgName.len > 0: 
-            pkgName[0].toUpperAscii() & pkgName[1..^1] 
-          else: 
+          if pkgName.len > 0:
+            pkgName[0].toUpperAscii() & pkgName[1..^1]
+          else:
             "AppImage Application"
 
         # Format a clean XDG compliant .desktop file
@@ -131,7 +116,6 @@ proc initDesktopFile(pkgName: string, appPath: string) =
   except CatchableError as e:
     errorMsg("Failed to extract AppImage assets: " & e.msg)
   finally:
-    setCurrentDir(currentDir)
     if dirExists(cacheWorkspace):
       try: removeDir(cacheWorkspace)
       except CatchableError: discard
