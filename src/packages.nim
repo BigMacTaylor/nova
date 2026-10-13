@@ -255,14 +255,18 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
 proc removePkg(pkgMan: string, targetStr: string) =
   debug "removePkg"
   let repoList = loadOrCreateRepoList(repoFile)
+  let targetLower = targetStr.toLowerAscii()
 
   # Check if target is already in the manifest
   for entry in repoList:
-    if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
-       (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
-      debug "Found package \'", targetStr, "\' in manifest."
-    else:
-      break
+    let foundInManifest =
+      (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetLower) or 
+      (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetLower)
+
+    if not foundInManifest:
+      continue
+
+    debug "Found package \'", targetStr, "\' in manifest."
 
     let pkgName = entry.getOrDefault("pkg_name").getStr("")
     let pkgType =
@@ -271,7 +275,6 @@ proc removePkg(pkgMan: string, targetStr: string) =
 
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-    echo installedVer
     if installedVer.len == 0:
       errorMsg("Package '" & pkgName & "' is not installed.")
       quit(1)
@@ -316,56 +319,61 @@ proc removePkg(pkgMan: string, targetStr: string) =
       warnMsg("Raw binary tarballs and structural build pipelines are not yet natively supported.")
 
 proc installPkg(pkgMan: string, targetStr: string) =
-  let currentList = loadOrCreateRepoList(repoFile)
-  var foundInManifest = false
+  let repoList = loadOrCreateRepoList(repoFile)
+  let targetLower = targetStr.toLowerAscii()
 
   # Check if target is already in the manifest
-  for entry in currentList:
-    if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
-       (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
-      debug "Found package \'", targetStr, "\' in manifest."
-      foundInManifest = true
-      let pkgName = entry.getOrDefault("pkg_name").getStr("")
-      let manifestVer = entry.getOrDefault("version").getStr("")
-      let downloadUrl = entry.getOrDefault("download_url").getStr("")
-      let pkgType =
-        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
-        except ValueError: Binary
+  for entry in repoList:
+    let foundInManifest =
+      (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetLower) or 
+      (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetLower)
 
-      if pkgName.len == 0 or downloadUrl.len == 0:
-        debug "Skipping incomplete or malformed entry in manifest."
-        continue
+    if not foundInManifest:
+      continue
 
-      # Get currently installed version
-      let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+    debug "Found package \'", targetStr, "\' in manifest."
 
-      # Check if it's missing or out of date
-      let isMissing = installedVer == ""
-      let isStale = (normalizeVersion(installedVer) != normalizeVersion(manifestVer)) and (manifestVer.len > 0)
+    let pkgName = entry.getOrDefault("pkg_name").getStr("")
+    let manifestVer = entry.getOrDefault("version").getStr("")
+    let downloadUrl = entry.getOrDefault("download_url").getStr("")
+    let pkgType =
+      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+      except ValueError: Binary
 
-      if isMissing or isStale:
-        if isMissing:
-          debug "Package '" & pkgName & "' is not present on the host system. Installing..."
-        else:
-          infoMsg(
-            "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
-              ") ➡️ Tracked (" & manifestVer & ")"
-          )
+    if pkgName.len == 0 or downloadUrl.len == 0:
+      debug "Skipping incomplete or malformed entry in manifest."
+      continue
 
-        # Install Package
-        waitFor installGitPkg(pkgMan, entry)
-        break
+    # Get currently installed version
+    let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
 
+    # Check if it's missing or out of date
+    let isMissing = installedVer.len == 0
+    let isStale = (manifestVer.len > 0) and (installedVer != manifestVer)
+
+    if isMissing or isStale:
+      if isMissing:
+        debug "Package '" & pkgName & "' is not present on the host system. Installing..."
       else:
-        styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
-        styledWrite(stdout, " is already the newest version ")
-        styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+        infoMsg(
+          "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
+            ") ➡️ Tracked (" & manifestVer & ")"
+        )
 
-        styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
-        quit(0)
+      # Install Package
+      waitFor installGitPkg(pkgMan, entry)
+      quit(0)
+
+    else:
+      styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
+      styledWrite(stdout, " is already the newest version ")
+      styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+
+      styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
+      quit(0)
 
   # If target's not in manifest and it's a Git repo, add it then install
-  if not foundInManifest and getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
+  if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
     infoMsg("Interpreted target as Git repository.")
     waitFor addGitRepo(pkgMan, targetStr)
 
@@ -377,4 +385,4 @@ proc installPkg(pkgMan: string, targetStr: string) =
       if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
         # Install Package
         waitFor installGitPkg(pkgMan, entry)
-        break
+        quit(0)
