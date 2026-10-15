@@ -28,11 +28,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Mark the workspace directory as safe
-      - name: Fix Git Safe Directory Permissions
-        run: |
-          git config --global --add safe.directory '*'
-
       # --- ENVIRONMENT SETUP BRANCHES ---
       
       - name: Set up Nim (Ubuntu GLIBC)
