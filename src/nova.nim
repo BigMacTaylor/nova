@@ -62,50 +62,8 @@ var preferMusl = false
 var includePrerelease = false
 
 proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.}
-include /[ui, commands, parsers, repo_man, packages, list, pkg_man, status, versions, actions]
-
-template printHelp() =
-  const msg = """Nova:
-  A wrapper for native package managers, that
-  can install packages directly from git repositories.
-
-Usage:
-  nova [Options] Command [Args]...
-
-Options:
-  -h, --help      Show this help message
-  -v, --version   Show version number and exit
-  --prefer-musl   Prefer musl over glibc (testing)
-  --include-prerelease  Allow beta, rc, and nightly versions over stable releases (testing)
-
-Commands:
-  search          Search for a package
-  install         Install package <name> or repo <owner/repo>
-  reinstall       Reinstall one or more packages
-  remove          Remove one or more packages
-  autoremove      Automatically clean up unused dependencies
-  refresh         Refresh the package cache and repos
-  update          Update 'same as refresh'
-  upgrade         Upgrade all packages
-  add-repo        Add system or git repo <owner/repo> 
-  remove-repo     Remove repo from repo list
-  list-repos      List all tracked repos
-  list-installed  List installed packages
-  list-updates    List available updates
-  status          Display install status, version, and size
-  show            Show detailed information about a package
-  info            Display information 'same as show'
-  history         Show installation history
-
-Examples:
-  nova add burntsushi/ripgrep
-  nova install ripgrep
-
-  nova add-repo https://github.com/BigMacTaylor/griddle
-  nova install griddle
-"""
-
-  echo formatHelpString(msg)
+include /[ui, help, commands, parsers, repo_man, packages]
+include /[list, pkg_man, status, versions, actions]
 
 # ----------------------------------------------------------------------------------------
 #                                    Main
@@ -131,6 +89,9 @@ proc main() =
       case p.key.toLowerAscii()
       of "h", "help":
         printHelp()
+        quit(0)
+      of "help-all":
+        printDetailedHelp()
         quit(0)
       of "v", "version":
         echo "nova version: " & version

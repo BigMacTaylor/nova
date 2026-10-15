@@ -52,8 +52,14 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
       removeGitRepo(targetStr)
       quit(0)
 
-  of actListRepos, actListInstalled, actListUpdates:
+  of actListRepos:
     styledEcho(fgWhite, styleBright, " System Repositories:", resetStyle)
+
+  of actListInstalled:
+    styledEcho(fgWhite, styleBright, " Installed System Packages:", resetStyle)
+
+  of actListUpdates:
+    styledEcho(fgWhite, styleBright, " Available System Updates:", resetStyle)
 
   of actListVersions:
     listPkgVersions(pkgMan, targetStr)

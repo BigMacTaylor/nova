@@ -41,31 +41,36 @@ proc printTableHeaders(title, col1, col2, col3: string) =
 
 proc formatHelpString(text: string): string =
   const commands = [
-    "search", "install", "reinstall", "remove", "autoremove", 
-    "refresh", "update", "upgrade", "add-repo", "remove-repo", 
-    "list-repos", "list-installed", "list-updates", "status", 
-    "show", "info", "history"
+    "add-repo", "remove-repo", "repo-remove", "list-installed", "list-updates", "list-upgrades",
+    "list-repos", "autoremove", "reinstall", "search", "install", "remove", "refresh", "upgrade",
+    "history", "update", "status", "info", "show", "stat", "list", "add", "rm"
   ]
   
   var resultLines: seq[string] = @[]
   
   for line in text.splitLines():
     let trimmed = line.strip()
-    
-    # Skip completely empty lines or handle clean pass-throughs
+
+    # Skip completely empty lines
     if line.len == 0 or trimmed.len == 0:
+      resultLines.add(line)
+      continue
+
+    # Skip comments (# ...)
+    if trimmed.startsWith('#'):
       resultLines.add(line)
       continue
 
     # Format Section Titles (e.g., "Usage:", "Options:", "Commands:")
     if trimmed.endsWith(':'):
       resultLines.add(ANSI_BOLD & line & ANSI_RESET)
-      
+      continue
+
     # Format Flags (Lines starting with '-')
-    elif trimmed.startsWith('-'):
+    if trimmed.startsWith('-'):
       let dashIdx = line.find('-')
       let leadingSpaces = if dashIdx != -1: line[0 ..< dashIdx] else: ""
-      
+
       # Split by double space to isolate the flags from the description column
       let parts = trimmed.split("  ", maxsplit = 1)
       if parts.len == 2:
@@ -74,43 +79,49 @@ proc formatHelpString(text: string): string =
         resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & flagsOnly & ANSI_RESET & "  " & description)
       else:
         resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & trimmed & ANSI_RESET)
+      continue
 
     # Handle Commands and Examples
-    else:
-      let isExample = trimmed.startsWith("nova ")
-      
-      # If it's an example, temporarily strip "nova " to extract the underlying command
-      let lookupString = if isExample: trimmed[5..^1] else: trimmed
-      
-      var matchedCommand = ""
-      for cmd in commands:
-        if lookupString.startsWith(cmd & " ") or lookupString == cmd:
-          matchedCommand = cmd
-          break
-          
-      if matchedCommand != "":
-        if isExample:
-          # Reconstruct example line: [spaces] + [cyan]nova command[/cyan] + [white]args[/white]
-          let baseIdx = line.find("nova ")
-          let leadingSpaces = if baseIdx != -1: line[0 ..< baseIdx] else: ""
-          let remainingArgs = lookupString[matchedCommand.len .. ^1]
-          
-          resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & "nova " & matchedCommand & ANSI_RESET & remainingArgs)
-        else:
-          # Reconstruct standard command row layout
-          let cmdIdx = line.find(matchedCommand)
-          let leadingSpaces = if cmdIdx != -1: line[0 ..< cmdIdx] else: ""
-          let remainingText = line[cmdIdx + matchedCommand.len .. ^1]
-          
-          resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & matchedCommand & ANSI_RESET & remainingText)
-          
-      elif isExample:
-        # Fallback for "nova" commands that don't match our specific actions list
+    let isExample = trimmed.startsWith("nova ")
+
+    # If it's an example, temporarily strip "nova " to extract the underlying command
+    let lookupString = if isExample: trimmed[5..^1] else: trimmed
+    
+    var matchedCommand = ""
+    for cmd in commands:
+      # Matches exact standalone words or groupings like "remove, rm"
+      if lookupString == cmd or 
+         lookupString.startsWith(cmd & " ") or 
+         lookupString.startsWith(cmd & ",") or
+         lookupString.contains(", " & cmd):
+        matchedCommand = cmd
+        break
+        
+    if matchedCommand != "":
+      if isExample:
+        # Reconstruct example line: [spaces] + [cyan]nova command[/cyan] + [white]args[/white]
         let baseIdx = line.find("nova ")
         let leadingSpaces = if baseIdx != -1: line[0 ..< baseIdx] else: ""
-        resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & trimmed & ANSI_RESET)
+        let remainingArgs = lookupString[matchedCommand.len .. ^1]
+        
+        resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & "nova " & matchedCommand & ANSI_RESET & remainingArgs)
       else:
-        resultLines.add(line)
+        # Reconstruct standard command row layout
+        let parts = trimmed.split("  ", maxsplit = 1)
+        let cmdIdx = line.find(parts[0])
+        let leadingSpaces = if cmdIdx != -1: line[0 ..< cmdIdx] else: ""
+        
+        if parts.len == 2:
+          resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & parts[0] & ANSI_RESET & "  " & parts[1])
+        else:
+          resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & trimmed & ANSI_RESET)
+          
+    elif isExample:
+      # Fallback for "nova" commands that don't match actions list
+      let baseIdx = line.find("nova ")
+      let leadingSpaces = if baseIdx != -1: line[0 ..< baseIdx] else: ""
+      resultLines.add(leadingSpaces & ANSI_BOLD & ANSI_CYAN & trimmed & ANSI_RESET)
+    else:
+      resultLines.add(line)
       
   return resultLines.join("\n")
-

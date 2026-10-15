@@ -40,7 +40,7 @@ proc listGitUpdates(pkgMan: string) =
       # Defer printing header until an update row is active
       if not headerPrinted:
         printTableHeaders(
-          "Available Updates for Git Applications:",
+          "Available Git Updates:",
           "Package",
           "Current",
           "Latest",
@@ -136,7 +136,7 @@ proc listGitPkgs(pkgMan: string) =
     return
 
   printTableHeaders(
-    "Git Packages:",
+    "Installed Git Packages:",
     "Package",
     "Version",
     "Type",
