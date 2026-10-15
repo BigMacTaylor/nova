@@ -41,7 +41,7 @@ jobs:
         if: matrix.target == 'musl'
         run: |
           apk update
-          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev github-cli git file libc-utils
+          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev zlib-static github-cli git file libc-utils
 
       # --- CODE VERIFICATION & COMPILATION ---
       
@@ -71,7 +71,7 @@ jobs:
             --passL:"-static" \
             --passL:"/usr/lib/libssl.a" \
             --passL:"/usr/lib/libcrypto.a" \
-            --passL:"-lz" \
+            --passL:"/usr/lib/libz.a" \
             --passL:"-lpthread" \
             -o:dist-bins/${{ env.MY_APP }}-linux-musl-amd64 \
             src/${{ env.MY_APP }}.nim
