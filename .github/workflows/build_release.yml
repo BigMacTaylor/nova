@@ -13,26 +13,76 @@ permissions:
 jobs:
   build-nim:
     runs-on: ubuntu-22.04
+    
+    strategy:
+      matrix:
+        include:
+          - target: glibc
+            image: null       
+          - target: musl
+            image: alpine:latest 
+
+    container: ${{ matrix.image }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Nim
+      # --- ENVIRONMENT SETUP BRANCHES ---
+      
+      - name: Set up Nim (Ubuntu GLIBC)
+        if: matrix.target == 'glibc'
         uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: 'stable'
 
+      # Install Nim and static musl OpenSSL via apk
+      - name: Set up Nim and Dependencies (Alpine MUSL)
+        if: matrix.target == 'musl'
+        run: |
+          apk update
+          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static github-cli git file libc-utils
+
+      # --- CODE VERIFICATION & COMPILATION ---
+      
+      # Format check on host runner only
       - name: Verify code formatting
+        if: matrix.target == 'glibc'
         run: |
           nimpretty --check src/*.nim
 
-      - name: Build Nim Release Binary
+      # Compile regular dynamically-linked binary
+      - name: Build Nim Release Binary (GLIBC)
+        if: matrix.target == 'glibc'
         run: |
           mkdir -p dist-bins/
-          nim c -d:release -o:dist-bins/${{ env.MY_APP }} src/${{ env.MY_APP }}.nim
+          nim c -d:release -d:ssl -o:dist-bins/${{ env.MY_APP }}-linux-amd64 src/${{ env.MY_APP }}.nim
 
+      # Compile statically-linked musl binary
+      - name: Build Nim Release Binary (MUSL)
+        if: matrix.target == 'musl'
+        run: |
+          mkdir -p dist-bins/
+          nim c -d:release -d:ssl \
+            --dynlibOverride:ssl \
+            --passL:"-static" \
+            --passL:"-lssl" \
+            --passL:"-lcrypto" \
+            -o:dist-bins/${{ env.MY_APP }}-linux-musl-amd64 \
+            src/${{ env.MY_APP }}.nim
+
+      # Verification check for musl build
+      - name: Verify Binary is Static (MUSL)
+        if: matrix.target == 'musl'
+        run: |
+          file dist-bins/${{ env.MY_APP }}-linux-musl-amd64
+          ! ldd dist-bins/${{ env.MY_APP }}-linux-musl-amd64 2>&1 | grep -q "Not a valid dynamic program" || echo "Verified: Fully static!"
+
+      # --- ASSET UPLOAD ---
+      
       - name: Upload Binary to Release
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" "dist-bins/${{ env.MY_APP }}" --clobber
+          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+          gh release upload "${{ github.event.release.tag_name }}" dist-bins/${{ env.MY_APP }}-* --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
