@@ -41,7 +41,7 @@ jobs:
         if: matrix.target == 'musl'
         run: |
           apk update
-          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static github-cli git file libc-utils
+          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev github-cli git file libc-utils
 
       # --- CODE VERIFICATION & COMPILATION ---
       
@@ -56,7 +56,7 @@ jobs:
         if: matrix.target == 'glibc'
         run: |
           mkdir -p dist-bins/
-          nim c -d:release -d:ssl -o:dist-bins/${{ env.MY_APP }}-linux-amd64 src/${{ env.MY_APP }}.nim
+          nim c -d:release -d:ssl -d:openssl3 -o:dist-bins/${{ env.MY_APP }}-linux-amd64 src/${{ env.MY_APP }}.nim
 
       # Compile statically-linked musl binary
       - name: Build Nim Release Binary (MUSL)
@@ -64,10 +64,15 @@ jobs:
         run: |
           mkdir -p dist-bins/
           nim c -d:release -d:ssl \
+            -d:openssl3 \
+            --define:sslVersion="3.0.0" \
             --dynlibOverride:ssl \
+            --dynlibOverride:crypto \
             --passL:"-static" \
-            --passL:"-lssl" \
-            --passL:"-lcrypto" \
+            --passL:"/usr/lib/libssl.a" \
+            --passL:"/usr/lib/libcrypto.a" \
+            --passL:"-lz" \
+            --passL:"-lpthread" \
             -o:dist-bins/${{ env.MY_APP }}-linux-musl-amd64 \
             src/${{ env.MY_APP }}.nim
 
