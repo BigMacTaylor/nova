@@ -28,6 +28,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Mark the workspace directory as safe
+      - name: Fix Git Safe Directory Permissions
+        run: |
+          git config --global --add safe.directory '*'
+
       # --- ENVIRONMENT SETUP BRANCHES ---
       
       - name: Set up Nim (Ubuntu GLIBC)
@@ -82,7 +87,6 @@ jobs:
       
       - name: Upload Binary to Release
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
-          gh release upload "${{ github.event.release.tag_name }}" dist-bins/${{ env.MY_APP }}-* --clobber
+          gh release upload "${{ github.event.release.tag_name }}" dist-bins/${{ env.MY_APP }}-* --clobber --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
