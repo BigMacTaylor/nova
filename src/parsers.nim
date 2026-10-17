@@ -37,7 +37,20 @@ proc normalizeVersion*(asset: string): string =
 
       # Must have at least one internal version dot divider, and end with a digit
       if versionDots >= 1 and cleanVer.len > 0 and cleanVer[cleanVer.high] in Digits:
-        return cleanVer
+        # Split into segments to strip leading zeros and enforce semver lengths
+        let rawSegments = cleanVer.split('.')
+        var cleanSegments: seq[string] = @[]
+        
+        for idx, seg in rawSegments:
+          # Strip leading zeros, but preserve a lone "0"
+          var normalizedSeg = seg.strip(leading = true, trailing = false, chars = {'0'})
+          if normalizedSeg.len == 0: normalizedSeg = "0"
+          cleanSegments.add(normalizedSeg)
+          
+          # Cap version segments at 3 elements (Major.Minor.Patch)
+          if cleanSegments.len == 3: break
+          
+        return cleanSegments.join(".")
 
     inc(i)
 
@@ -371,17 +384,21 @@ proc findVersionStart(asset: string): int =
   return -1
 
 proc cleanKeywords(name: string): string =
-  ## Drops architectural noise and platform descriptors from unversioned regions
-  result = name
-  const keywords = ["-linux", "_linux", "-x86", "_x86", "-arm", "_arm", "-riscv", "-anylinux", 
-    "-musl", "_musl", "-static", "_static", "-gnu", "_gnu", "-unknown", "_unknown"]
+  ## Drops explicit internal platform and OS distribution noise
+  result = name.toLowerAscii()
+  const keywords = [
+    "-linux", "_linux", "-x86", "_x86", "-arm", "_arm", "-riscv", "-anylinux", 
+    "_fedora", "-fedora", "_ubu24", "-ubu24", "_ubuntu", "-ubuntu"
+  ]
   for keyword in keywords:
     let idx = result.find(keyword)
     if idx > 0:
       result = result[0 ..< idx]
 
+
 proc getPackageName*(asset: string): string =
   # Edge Case: Pure version strings
+  if asset.len == 0: return "unknown"
   let isPureVer = asset[0] in Digits or (asset[0] == 'v' and asset.len > 1 and asset[1] in Digits)
   if isPureVer:
     var idx = if asset[0] == 'v': 1 else: 0
@@ -392,23 +409,54 @@ proc getPackageName*(asset: string): string =
   # Global aliases up front
   if asset.startsWith("nvim"): return "neovim"
 
-  # Parse via Version boundaries
+  # Determine raw name before versioning metadata markers
+  var baseName = ""
   let verIdx = findVersionStart(asset)
+  
   if verIdx > 0:
     let separator = asset[verIdx - 1]
+    baseName = asset[0 ..< verIdx - 1]
     
-    if separator == '_':
-      # Conventions like "bat-musl_0.26.1" preserve everything on the left side
-      return asset[0 ..< verIdx - 1].toLowerAscii()
+    # If separated by an underscore (like deb/rpm assets), do not strip keywords on the left.
+    if separator != '_':
+      baseName = cleanKeywords(baseName)
+  else:
+    baseName = asset
+    let dotPos = baseName.find('.')
+    if dotPos != -1: baseName = baseName[0 ..< dotPos] # drop extensions like .AppImage
+    baseName = cleanKeywords(baseName)
+
+    # Completely unversioned fallback logic: Strip trailing metadata tags sequentially
+    const trailingNoise = [
+      "musl", "gnu", "static", "linux", "amd64", "arm64", "x86", "x86_64", "unknown"
+    ]
+    while true:
+      let lastDash = baseName.rfind('-')
+      let lastUnder = baseName.rfind('_')
+      let lastSepIdx = max(lastDash, lastUnder)
       
-    elif separator == '-':
-      # Handle hyphenated structures like "fastfetch-linux-amd64"
-      var baseName = asset[0 ..< verIdx - 1].toLowerAscii()
-      return cleanKeywords(baseName)
+      if lastSepIdx == -1: break
+      
+      let trailingPart = baseName.substr(lastSepIdx + 1).toLowerAscii()
+      if trailingPart in trailingNoise or trailingPart.len == 0:
+        baseName = baseName.substr(0, lastSepIdx - 1)
+      else:
+        break
 
-  # Fallback for completely unversioned binaries (e.g., btop-x86_64, tldr-linux-arm64)
-  var cleanStr = asset.toLowerAscii()
-  let dotPos = cleanStr.find('.')
-  if dotPos != -1: cleanStr = cleanStr[0 ..< dotPos] # drop extensions
+  # Expand PascalCase / camelCase structural layouts into kebab-case (e.g., BambuStudio -> bambu-studio)
+  var processedName = ""
+  for i, ch in baseName:
+    if i > 0 and ch in {'A'..'Z'}:
+      let prev = baseName[i - 1]
+      if prev in {'a'..'z'} or prev in Digits:
+        processedName.add('-')
+    processedName.add(ch.toLowerAscii())
 
-  return cleanKeywords(cleanStr)
+  # Normalize internal underscores to standardized hyphens unless it's preserved metadata
+  processedName = processedName.replace('_', '-')
+
+  # Trim accidental leading or trailing hyphens introduced during extraction shifts
+  processedName = processedName.strip(chars = {'-'})
+
+  return if processedName.len > 0: processedName else: "unknown"
+
