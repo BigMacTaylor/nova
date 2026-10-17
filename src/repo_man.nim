@@ -34,6 +34,7 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
       case pkgMan
       of "apt", "nala": "deb"
       of "dnf", "yum", "zypper": "rpm"
+      of "pacman": "pkg.tar.zst"
       else: ""
 
     # Search through releases (optionally prereleases)
@@ -90,26 +91,27 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
 
         # Native packages (.deb, .rpm)
         if pkgExtension.len > 0 and assetName.endsWith("." & pkgExtension):
+          detectedType = case pkgExtension
+            of "deb": Deb
+            of "rpm": Rpm
+            else: Pacman
           if matchesArch:
             debug "Found matching asset: ", assetName
-            detectedType = if pkgExtension == "deb": Deb else: Rpm
             formatScore = 30  # Highest priority format
           elif isUniversal:
             debug "Found universal asset: ", assetName
-            detectedType = if pkgExtension == "deb": Deb else: Rpm
             formatScore = 28  # Slightly lower score so exact matches win if present
           else:
             continue
 
         # Appimages
         elif assetName.endsWith(".appimage"):
+          detectedType = AppImage
           if matchesArch:
             debug "Found matching AppImage asset: ", assetName
-            detectedType = AppImage
             formatScore = 20  # Mid priority format
           elif isUniversal:
             debug "Found universal AppImage asset: ", assetName
-            detectedType = AppImage
             formatScore = 18  # Slightly lower score so exact matches win if present
           else:
             continue

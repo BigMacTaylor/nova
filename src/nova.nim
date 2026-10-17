@@ -39,6 +39,7 @@ type SourceType* = enum
 type PkgType* = enum
   Deb
   Rpm
+  Pacman
   AppImage
   Flatpak
   Snap

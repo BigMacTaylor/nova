@@ -208,7 +208,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
 
   # Install Packages by Type
   case pkgType
-  of Deb, Rpm:
+  of Deb, Rpm, Pacman:
     infoMsg("Installing native package...")
     let exitCode = runNativeCommand(pkgMan, actInstall, downloadPath)
     if exitCode == 0:
@@ -281,7 +281,7 @@ proc removePkg(pkgMan: string, targetStr: string) =
 
     # Remove Packages by Type
     case pkgType
-    of Deb, Rpm:
+    of Deb, Rpm, Pacman:
       infoMsg("Uninstalling native package...")
       let exitCode = runNativeCommand(pkgMan, actRemove, pkgName)
       if exitCode == 0:
