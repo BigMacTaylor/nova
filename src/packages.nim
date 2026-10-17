@@ -5,6 +5,79 @@
 #
 # ========================================================================================
 
+proc extractArchive(archivePath, destDir: string): bool =
+  ## Safely extracts tar.gz, tar.xz, or zip archives using host system utilities.
+  debug "extractArchive: " & archivePath
+  let lowerPath = archivePath.toLowerAscii()
+  var cmd = ""
+  
+  if lowerPath.endsWith(".tar.gz") or lowerPath.endsWith(".tgz"):
+    cmd = "tar -xzf " & quoteShell(archivePath) & " -C " & quoteShell(destDir)
+  elif lowerPath.endsWith(".tar.xz") or lowerPath.endsWith(".txz"):
+    cmd = "tar -xJf " & quoteShell(archivePath) & " -C " & quoteShell(destDir)
+  elif lowerPath.endsWith(".zip"):
+    cmd = "unzip -q " & quoteShell(archivePath) & " -d " & quoteShell(destDir)
+  else:
+    return false
+
+  return execCmd(cmd) == 0
+
+proc installRawBinary(pkgName, downloadPath: string) =
+  ## Extracts an archive, isolates the exact executable payload, and places it in ~/.local/bin
+  infoMsg("Installing standalone raw binary pipeline...")
+  let uid = getuid()
+  let localBinDir = os.getHomeDir() / ".local" / "bin"
+  let extractWorkspace = getTempDir() / "nova-binary-extract-" & $uid
+
+  if not dirExists(localBinDir):
+    createDir(localBinDir)
+  if dirExists(extractWorkspace):
+    try: removeDir(extractWorkspace) except CatchableError: discard
+  createDir(extractWorkspace)
+
+  try:
+    if not extractArchive(downloadPath, extractWorkspace):
+      errorMsg("Failed to decompress archive wrapper payload cleanly.")
+      quit(1)
+
+    var discoveredBinary = ""
+    # Scan the workspace for unextended files with user/group execution permissions
+    for path in walkDirRec(extractWorkspace, yieldFilter = {pcFile}):
+      let filePerms = getFilePermissions(path)
+      let isExecutable = fpUserExec in filePerms or fpGroupExec in filePerms
+      let filename = splitFile(path).name.toLowerAscii()
+
+      # Filter out documentation noise or common text descriptors
+      if isExecutable and not filename.endsWith(".md") and not filename.endsWith(".txt") and not filename.endsWith(".sh"):
+        # Match target package context explicitly, or settle for the first logical executable
+        if pkgName.toLowerAscii() in filename:
+          discoveredBinary = path
+          break
+        if discoveredBinary.len == 0:
+          discoveredBinary = path
+
+    if discoveredBinary.len > 0 and fileExists(discoveredBinary):
+      let finalDest = localBinDir / pkgName
+      copyFile(discoveredBinary, finalDest)
+      
+      # Enforce uniform binary system execution permissions (0o755)
+      let perms = getFilePermissions(finalDest)
+      setFilePermissions(finalDest, perms + {fpUserExec, fpGroupExec, fpOthersExec})
+
+      successMsg("Successfully installed binary to " & finalDest)
+      infoMsg("Ensure '" & localBinDir & "' is exported to your system $PATH ")
+      quit(0)
+    else:
+      errorMsg("Could not find a valid execution payload target inside the archive workspace.")
+      quit(1)
+
+  except CatchableError as e:
+    errorMsg("Encountered structural error during binary installation: " & e.msg)
+    quit(1)
+  finally:
+    if dirExists(extractWorkspace):
+      try: removeDir(extractWorkspace) except CatchableError: discard
+
 proc removeDesktopFile(pkgName: string) =
   let uid = getuid()
 
@@ -249,8 +322,11 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   of Flatpak, Snap:
     warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
 
-  of Binary, Source:
-    warnMsg("Raw binary tarballs and structural build pipelines are not yet natively supported.")
+  of Binary:
+    installRawBinary(pkgName, downloadPath)
+
+  of Source:
+    warnMsg("Build pipelines are not yet natively supported.")
 
 proc removePkg(pkgMan: string, targetStr: string) =
   debug "removePkg"
@@ -315,8 +391,25 @@ proc removePkg(pkgMan: string, targetStr: string) =
     of Flatpak, Snap:
       warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
 
-    of Binary, Source:
-      warnMsg("Raw binary tarballs and structural build pipelines are not yet natively supported.")
+    of Binary:
+      infoMsg("Uninstalling standalone native binary...")
+      let localBinDir = os.getHomeDir() / ".local" / "bin"
+      let pkgPath = localBinDir / pkgName
+
+      if fileExists(pkgPath):
+        try:
+          removeFile(pkgPath)
+          successMsg("Successfully uninstalled binary \'" & pkgName & "\'")
+          quit(0)
+        except OSError:
+          errorMsg("Failed to delete binary path: " & pkgPath)
+          quit(1)
+      else:
+        warnMsg("Binary target did not exist at: " & pkgPath)
+        quit(0)
+
+    of Source:
+      warnMsg("Build pipelines are not yet natively supported.")
 
 proc installPkg(pkgMan: string, targetStr: string) =
   let repoList = loadOrCreateRepoList(repoFile)

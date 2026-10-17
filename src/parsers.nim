@@ -232,6 +232,16 @@ proc getAppImageVersion(appName: string): string =
 
   return getMountAppImageVer(appImagePath)
 
+proc getBinaryVersion(pkgName: string): string =
+  ## Tries to execute the localized binary with '--version' to get state data
+  let binaryPath = os.getHomeDir() / ".local" / "bin" / pkgName
+  if not fileExists(binaryPath): return ""
+  
+  let (output, exitCode) = execCmdEx(quoteShell(binaryPath) & " --version")
+  if exitCode == 0 and output.strip().len > 0:
+    return output.strip()
+  return "1.0.0" # Clean operational fallback string if flag fails
+
 proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
   debug "get installed version"
   case pkgType
@@ -239,6 +249,8 @@ proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
     return normalizeVersion(getNativeVersion(pkgMan, pkgName))
   of AppImage:
     return normalizeVersion(getAppImageVersion(pkgName))
+  of Binary:
+    return normalizeVersion(getBinaryVersion(pkgName))
   else:
     debug "no installed version found"
     return ""

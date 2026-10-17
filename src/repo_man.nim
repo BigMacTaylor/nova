@@ -116,14 +116,21 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
           else:
             continue
 
+        # Binaries
         elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
-          # TODO add binary support
-          debug "Asset is not a valid package: ", assetName
           detectedType = Binary
-          formatScore = 10  # Low priority binary archive
-          continue
+          if matchesArch:
+            debug "Found matching binary archive: ", assetName
+            formatScore = 10  # Low priority binary archive
+          elif isUniversal:
+            debug "Found universal binary archive: ", assetName
+            formatScore = 8
+          else:
+            continue
+
+        # Skip documentation, shasums, or source code
         else:
-          continue # Skip documentation, shasums, or source code
+          continue
 
         # Prefered Lib Weight (0 or 5)
         var libScore = 0
