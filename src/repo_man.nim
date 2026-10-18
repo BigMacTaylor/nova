@@ -69,6 +69,16 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
         let assetName = asset["name"].getStr().toLowerAscii()
         debug "Found asset: ", assetName
 
+        # Block non-Linux formats and tags
+        if ".exe" in assetName or ".msi" in assetName or ".dmg" in assetName or ".pkg" in assetName:
+          continue
+        if "windows" in assetName or "win32" in assetName or "win64" in assetName:
+          continue
+        if "macos" in assetName or "darwin" in assetName or "apple" in assetName or "osx" in assetName:
+          continue
+        if "freebsd" in assetName or "openbsd" in assetName or "netbsd" in assetName or "bsd" in assetName:
+          continue
+
         # Prefered Format Weight (0 to 30)
         var formatScore = -1
         var detectedType: PkgType
@@ -86,8 +96,9 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
             assetName.contains("amd64") or 
             assetName.contains("arm64") or 
             assetName.contains("aarch64") or 
-            assetName.contains("i386") or 
-            assetName.contains("armhf"))
+            assetName.contains("386") or 
+            assetName.contains("arm") or
+            assetName.contains("mips"))
 
         # Native packages (.deb, .rpm)
         if pkgExtension.len > 0 and assetName.endsWith("." & pkgExtension):
@@ -168,6 +179,8 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
 
       successMsg("Found installable package \'", finalAssetName, "\'")
       let packageName = getPackageName(finalAssetName)
+      debug "Asset Tag Name: ", tagName
+      debug "Asset URL: ", downloadUrl
 
       return (
         name: repoPath,
@@ -188,6 +201,10 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
     errorMsg("Network error trying to get latest release for \'" & repoPath & "\': " & e.msg)
   finally:
     client.close()
+
+# ----------------------------------------------------------------------------------------
+#                                    Upgrade
+# ----------------------------------------------------------------------------------------
 
 proc upgradeGitRepos(pkgMan: string) {.async.} =
   if not fileExists(repoFile):
@@ -231,6 +248,10 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
       debug(pkgName & " [" & installedVer & "] is already current.")
 
   successMsg("All git packages are up to date.")
+
+# ----------------------------------------------------------------------------------------
+#                                    Refresh
+# ----------------------------------------------------------------------------------------
 
 proc refreshGitRepos(pkgMan: string) {.async.} =
   if not fileExists(repoFile):
@@ -290,6 +311,10 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
   else:
     successMsg("All packages are already up to date!")
 
+# ----------------------------------------------------------------------------------------
+#                                    Remove
+# ----------------------------------------------------------------------------------------
+
 proc removeGitRepo(repoInput: string) =
   if not fileExists(repoFile):
     warnMsg("Repository manifest not found. Nothing to remove.")
@@ -315,6 +340,10 @@ proc removeGitRepo(repoInput: string) =
       errorMsg("Could not save changes to manifest.")
   else:
     errorMsg("Repository \'" & targetRepo & "\' not found.")
+
+# ----------------------------------------------------------------------------------------
+#                                    Add
+# ----------------------------------------------------------------------------------------
 
 proc addGitRepo(pkgMan, repoInput: string) {.async.} =
   let repoPath = getRepoName(repoInput)
