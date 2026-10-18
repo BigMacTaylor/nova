@@ -49,11 +49,10 @@ proc findInManifest(repoList: JsonNode, targetStr: string): int =
   var i = 0
 
   for entry in repoList:
-    let found =
-      (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetLower) or 
-      (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetLower)
-    
-    if found:
+    let matchName = entry.getOrDefault("pkg_name").getStr("").toLowerAscii()
+    let matchRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
+
+    if matchName == targetLower or matchRepo == targetLower:
       return i
 
     inc(i)
@@ -235,9 +234,12 @@ proc initDesktopFile(pkgName: string, appPath: string) =
       if extractedDesktopPath.len > 0 and fileExists(extractedDesktopPath):
         var updatedLines: seq[string] = @[]
         for line in lines(extractedDesktopPath):
-          if line.strip().startsWith("Exec="):
-            updatedLines.add("Exec=\"" & appPath & "\"")
-          elif line.strip().startsWith("Icon="):
+          let stripped = line.strip()
+          if stripped.startsWith("Exec="):
+            updatedLines.add("Exec=" & appPath)
+          elif stripped.startsWith("TryExec="):
+            updatedLines.add("TryExec=" & appPath)
+          elif stripped.startsWith("Icon="):
             updatedLines.add("Icon=" & pkgName.toLowerAscii())
           else:
             updatedLines.add(line)
@@ -257,7 +259,8 @@ proc initDesktopFile(pkgName: string, appPath: string) =
           "[Desktop Entry]\n" &
           "Type=Application\n" &
           "Name=" & displayName & "\n" &
-          "Exec=\"" & appPath & "\"\n" &
+          "Exec=" & appPath & "\n" &
+          "TryExec=" & appPath & "\n" &
           "Terminal=false\n" &
           "Categories=Utility;Development;\n" &
           "Comment=Installed via Nova Package Manager\n" &
