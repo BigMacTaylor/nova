@@ -18,9 +18,11 @@ jobs:
       matrix:
         include:
           - target: glibc
-            image: null       
+            image: null
+            suffix: glibc
           - target: musl
-            image: alpine:latest 
+            image: alpine:latest
+            suffix: musl
 
     container: ${{ matrix.image }}
 
@@ -29,22 +31,22 @@ jobs:
         uses: actions/checkout@v4
 
       # --- ENVIRONMENT SETUP BRANCHES ---
-      
+
       - name: Set up Nim (Ubuntu GLIBC)
         if: matrix.target == 'glibc'
         uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: 'stable'
 
-      # Install Nim and static musl OpenSSL via apk
+      # Install Nim, static musl OpenSSL, and verification tools via apk
       - name: Set up Nim and Dependencies (Alpine MUSL)
         if: matrix.target == 'musl'
         run: |
           apk update
-          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev zlib-static github-cli git file libc-utils
+          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev zlib-static github-cli git file libc-utils tar coreutils
 
       # --- CODE VERIFICATION & COMPILATION ---
-      
+
       # Format check on host runner only
       - name: Verify code formatting
         if: matrix.target == 'glibc'
@@ -55,14 +57,15 @@ jobs:
       - name: Build Nim Release Binary (GLIBC)
         if: matrix.target == 'glibc'
         run: |
-          mkdir -p dist-bins/
-          nim c -d:release -d:ssl -d:openssl3 -o:dist-bins/${{ env.MY_APP }}-linux-amd64 src/${{ env.MY_APP }}.nim
+          mkdir -p dist-bins/ glibc-bin/
+          nim c -d:release -d:ssl -d:openssl3 -o:glibc-bin/${{ env.MY_APP }} src/${{ env.MY_APP }}.nim
+          tar -czf dist-bins/${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz -C glibc-bin/ ${{ env.MY_APP }}
 
       # Compile statically-linked musl binary
       - name: Build Nim Release Binary (MUSL)
         if: matrix.target == 'musl'
         run: |
-          mkdir -p dist-bins/
+          mkdir -p dist-bins/ musl-bin/
           nim c -d:release -d:ssl \
             -d:openssl3 \
             --define:sslVersion="3.0.0" \
@@ -73,20 +76,32 @@ jobs:
             --passL:"/usr/lib/libcrypto.a" \
             --passL:"/usr/lib/libz.a" \
             --passL:"-lpthread" \
-            -o:dist-bins/${{ env.MY_APP }}-linux-musl-amd64 \
+            -o:musl-bin/${{ env.MY_APP }} \
             src/${{ env.MY_APP }}.nim
+          tar -czf dist-bins/${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz -C musl-bin/ ${{ env.MY_APP }}
 
       # Verification check for musl build
       - name: Verify Binary is Static (MUSL)
         if: matrix.target == 'musl'
         run: |
-          file dist-bins/${{ env.MY_APP }}-linux-musl-amd64
-          ! ldd dist-bins/${{ env.MY_APP }}-linux-musl-amd64 2>&1 | grep -q "Not a valid dynamic program" || echo "Verified: Fully static!"
+          file musl-bin/${{ env.MY_APP }}
+          ! ldd musl-bin/${{ env.MY_APP }} 2>&1 | grep -q "Not a valid dynamic program" || echo "Verified: Fully static!"
+
+      # --- CHECKSUM GENERATION ---
+
+      # Compute SHA-256 for the archive produced by the matrix runner
+      - name: Generate Checksum
+        run: |
+          cd dist-bins/
+          sha256sum ${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz > ${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz.sha256
 
       # --- ASSET UPLOAD ---
-      
-      - name: Upload Binary to Release
+
+      # Uploads both the tarball and its separate checksum asset.
+      # If you prefer a single collective 'checksums.txt' summary file instead, 
+      # a single coordination job would be needed. 
+      - name: Upload Archives and Checksums to Release
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" dist-bins/${{ env.MY_APP }}-* --clobber --repo "${{ github.repository }}"
+          gh release upload "${{ github.event.release.tag_name }}" dist-bins/*.tar.gz dist-bins/*.sha256 --clobber --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
