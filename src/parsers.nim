@@ -246,14 +246,63 @@ proc getAppImageVersion(appName: string): string =
   return getMountAppImageVer(appImagePath)
 
 proc getBinaryVersion(pkgName: string): string =
-  ## Tries to execute the localized binary with '--version' to get state data
+  ## Tries to execute the localized binary with '--version', '-v', or 'version'
+  debug "getBinaryVersion"
   let binaryPath = os.getHomeDir() / ".local" / "bin" / pkgName
-  if not fileExists(binaryPath): return ""
-  
-  let (output, exitCode) = execCmdEx(quoteShell(binaryPath) & " --version")
-  if exitCode == 0 and output.strip().len > 0:
-    return output.strip()
-  return "1.0.0" # Clean operational fallback string if flag fails
+  if not fileExists(binaryPath): 
+    return ""
+
+  # Helper closure to execute a specific flag and attempt to parse the version
+  let checkFlag = proc(flag: string): (string, bool) =
+    let (output, exitCode) = execCmdEx(quoteShell(binaryPath) & " " & flag)
+    if exitCode == 0 and output.strip().len > 0:
+      let cleanOutput = output.strip()
+
+      # Parse lines to find common version format variants
+      for line in cleanOutput.splitLines():
+        let lowerLine = line.toLowerAscii()
+        var pos = lowerLine.find("version:")
+        var offset = "version=".len
+        
+        # Fallback to checking for "version=" if "version:" is missing
+        if pos == -1:
+          pos = lowerLine.find("version=")
+          offset = "version:".len
+
+        if pos != -1:
+          # Slice from right after "version:" to the end of that specific line
+          let startIdx = pos + offset
+          var content = line[startIdx .. ^1].strip()
+
+          # If the value is comma-separated (like lazygit's format), truncate at the comma
+          let commaPos = content.find(',')
+          if commaPos != -1:
+            content = content[0 ..< commaPos].strip()
+            
+          if content.len > 0:
+            return (content, true)
+
+      # Generic fallback: return the first line if no "version" prefix was found
+      let lines = cleanOutput.splitLines()
+      if lines.len > 0 and lines[0].strip().len > 0:
+        return (lines[0].strip(), true)
+        
+    return ("", false)
+
+  # Try running with --version
+  let (verLong, successLong) = checkFlag("--version")
+  if successLong: return verLong
+
+  # Try running with -v
+  let (verShort, successShort) = checkFlag("-v")
+  if successShort: return verShort
+
+  # Try running with version (e.g., Go subcommands or CLI tools)
+  let (verCmd, successCmd) = checkFlag("version")
+  if successCmd: return verCmd
+
+  # Fallback string if all flags fail
+  return "1.0.0" 
 
 proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
   debug "getInstalledVersion"
