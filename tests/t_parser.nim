@@ -1,7 +1,7 @@
 ## Test suite for nova.
 ## Exercises module functionality using the standard unittest framework.
 
-import std/[os, unittest, strutils]
+import std/[unittest]
 import ../src/nova
 
 # Repository Test Cases
@@ -95,8 +95,11 @@ let assetTestCases = @[
   (asset: "fooyin-0.13.1.fc43.x86_64.rpm", name: "fooyin", ver: "0.13.1"),
   (asset: "fzf-0.54.3-linux_amd64.tar.gz", name: "fzf", ver: "0.54.3"),
   (asset: "gh_2.55.0_linux_amd64.deb", name: "gh", ver: "2.55.0"),
-  (asset: "gnome-desktop-42.0", name: "gnome-desktop", ver: "42.0"),
-  (asset: "helix-24.07-x86_64-linux.tar.xz", name: "helix", ver: "24.7"),
+  (asset: "gnome-desktop-42.0", name: "gnome-desktop", ver: "42.0.0"),
+  (asset: "helix-24.07-x86_64-linux.tar.xz", name: "helix", ver: "24.7.0"),
+  (asset: "helix-25.07.1-x86_64-linux.tar.xz", name: "helix", ver: "25.7.1"),
+  (asset: "helix-25.07-x86_64.AppImage", name: "helix", ver: "25.7.0"),
+  (asset: "helix_25.7.0-1_amd64.deb", name: "helix", ver: "25.7.0"),
   (asset: "htop-3.3.0-1.el9.x86_64.rpm", name: "htop", ver: "3.3.0"),
   (asset: "jq-linux-riscv64", name: "jq", ver: ""),
   (asset: "lazygit_0.41.0_Linux_x86_64.tar.gz", name: "lazygit", ver: "0.41.0"),
@@ -128,8 +131,59 @@ let assetTestCases = @[
 
 echo "\n  Nova - Unit Tests"
 
-suite "Remote Source and Repository Tests":
+suite "ANSI Escape Sequence Tests":
+  test "Strip standard escape sequences (\\e)":
+    # Bold Red text wrapping a version
+    check stripAnsi("\e[1;31mv1.2.10\e[0m") == "v1.2.10"
+    # Simple Green foreground sequence
+    check stripAnsi("\e[32mripgrep\e[0m") == "ripgrep"
+    check stripAnsi("Found \e[32mripgrep_\e[1;33m13.0.0\e[0m_amd64.deb") == "Found ripgrep_13.0.0_amd64.deb"
 
+  test "Strip literal escaped '\\e' strings":
+    # When read directly out of some test configurations or files as text
+    check stripAnsi("\\e[1m\\e[34m2\\e[0m") == "2"
+    check stripAnsi("Found \\e[32mripgrep_\\e[1;33m13.0.0\\e[0m_amd64.deb") == "Found ripgrep_13.0.0_amd64.deb"
+
+  test "Handle multiple chained styling rules":
+    # Multi-attribute chains (e.g. Bold, Underline, Background Color)
+    check stripAnsi("\e[1;4;38;5;214mText\e[0m") == "Text"
+    check stripAnsi("\e[1m\e[34m2\e[0m") == "2"
+
+  test "Leave ordinary strings alone":
+    check stripAnsi("pure-text-v1.0.0") == "pure-text-v1.0.0"
+    check stripAnsi("") == ""
+
+suite "Version String Tests":
+  test "Standard SemVer strings":
+    check normalizeVersion("v1.2.10") == "1.2.10"
+    check normalizeVersion("v1.2.4-alpha") == "1.2.4"
+    check normalizeVersion("1.4.7+f7b2e8a") == "1.4.7"
+    check normalizeVersion("v1.4.7+f7b2e8a") == "1.4.7"
+    check normalizeVersion("v.0.4.0-rc.1+build.12") == "0.4.0"
+    check normalizeVersion("1.4.7-rc1") == "1.4.7"
+
+  test "Varying digit counts and partials":
+    check normalizeVersion("1") == "1.0.0"
+    check normalizeVersion("2.0") == "2.0.0"
+    check normalizeVersion("v2") == "2.0.0"
+
+  test "Complex file packaging naming":
+    check normalizeVersion("bat-v0.24.0-x86_64") == "0.24.0"
+    check normalizeVersion("1.4.7-1ubuntu2") == "1.4.7"
+    check normalizeVersion("fastfetch-linux-amd64.tar.gz") == ""
+    check normalizeVersion("ripgrep_13.0.0_amd64.deb") == "13.0.0"
+
+  test "Compare Version Strings":
+    # 1: v1 is newer, -1: v2 is newer, 0: identical
+    check compareVersionStrings("1.2.10", "1.2.2") == 1
+    check compareVersionStrings("1.10", "1.2.2") == 1
+    check compareVersionStrings("10.0.1", "9.9.9") == 1
+    check compareVersionStrings("1.2.2", "1.2.2") == 0
+    check compareVersionStrings("1.0.0", "1.0") == 0
+    check compareVersionStrings("2.1", "2.11") == -1
+    check compareVersionStrings("", "2.11") == -1
+
+suite "Remote Source and Repository Tests":
   test "Extract Repository Name":
     for idx, tc in repoNameTestCases:
       let parsedRepo = getRepoName(tc.input)
@@ -143,7 +197,6 @@ suite "Remote Source and Repository Tests":
       checkpoint "[PASS] Source Type Idx (" & $idx & "): " & tc.input
 
 suite "Asset Validation Tests":
-
   test "Parse Package Name":
     for idx, tc in assetTestCases:
       let parsedName = getPackageName(tc.asset)
@@ -155,22 +208,3 @@ suite "Asset Validation Tests":
       let parsedVersion = normalizeVersion(tc.asset)
       check parsedVersion == tc.ver
       checkpoint "[PASS] Idx (" & $idx & "): " & tc.asset
-
-suite "Version String Tests":
-
-  test "Normalize Version":
-    check normalizeVersion("v1.2.10") == "1.2.10"
-    check normalizeVersion("bat-v0.24.0-x86_64") == "0.24.0"
-    check normalizeVersion("fastfetch-linux-amd64.tar.gz") == ""
-    check normalizeVersion("ripgrep_13.0.0_amd64.deb") == "13.0.0"
-    check normalizeVersion("1.0") == "1.0" # Missing second dot sub-divider
-
-  test "Compare Version Strings":
-    # 1: v1 is newer, -1: v2 is newer, 0: identical
-    check compareVersionStrings("1.2.10", "1.2.2") == 1
-    check compareVersionStrings("1.10", "1.2.2") == 1
-    check compareVersionStrings("10.0.1", "9.9.9") == 1
-    check compareVersionStrings("1.2.2", "1.2.2") == 0
-    check compareVersionStrings("1.0.0", "1.0") == 0
-    check compareVersionStrings("2.1", "2.11") == -1
-    check compareVersionStrings("", "2.11") == -1
