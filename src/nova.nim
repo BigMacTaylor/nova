@@ -102,8 +102,8 @@ proc main() =
       of "include-prerelease":
         includePrerelease = true
       else:
-        echo "Error: Unknown option \'", p.key, "\'"
-        echo "Use -h for help \n"
+        errorMsg("Unknown option \'", p.key, "\'")
+        infoMsg("Use -h for help \n")
         quit(1)
     of cmdArgument:
       if firstAction.len == 0:
@@ -118,7 +118,7 @@ proc main() =
 
   if action == actUnknown:
     errorMsg("Unknown action \'", firstAction, "\'")
-    printHelp()
+    infoMsg("Use -h for help \n")
     quit(1)
 
   var targetStr = targets.join(" ")

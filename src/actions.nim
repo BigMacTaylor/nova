@@ -76,7 +76,7 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
       echo output.strip()
       quit(0)
     else:
-      warnMsg("Native lookup missed. Cascading down...")
+      debug "Native lookup missed. Cascading down..."
       handleInfoFallback(targetStr)
       quit(0)
 

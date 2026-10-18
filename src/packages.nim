@@ -5,6 +5,65 @@
 #
 # ========================================================================================
 
+proc downloadPkg(downloadUrl: string): Future[string] {.async.} =
+  # Parse filename from the end of the download URL
+  let fileInfo = downloadUrl.splitFile()
+  let assetName = fileInfo.name & fileInfo.ext
+
+  if assetName.len == 0 or fileInfo.ext.len == 0:
+    errorMsg("Could not deduce a valid package filename from URL: " & downloadUrl)
+    return ""
+
+  infoMsg("Downloading package \'" & assetName & "\'...")
+
+  let client = newAsyncHttpClient()
+  client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
+  client.timeout = 35000
+
+  try:
+    let uid = getuid()
+    let cacheDir = getTempDir() / "nova-cache-" & $uid
+
+    if symlinkExists(cacheDir) or fileExists(cacheDir):
+      removeFile(cacheDir)
+
+    if not dirExists(cacheDir):
+      createDir(cacheDir)
+
+    let destFile = cacheDir / assetName
+
+    await client.downloadFile(downloadUrl, destFile)
+    debug "Downloaded package to: " & destFile
+    return destFile
+
+  except CatchableError as e:
+    errorMsg("Failed to download package binary: " & e.msg)
+    return ""
+  finally:
+    client.close()
+
+proc findInManifest(repoList: JsonNode, targetStr: string): int =
+  ## Iterates through the manifest and returns the index of the matching package.
+  ## Returns -1 if no matching package or repository name is found.
+  let targetLower = targetStr.toLowerAscii()
+  var i = 0
+
+  for entry in repoList:
+    let found =
+      (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetLower) or 
+      (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetLower)
+    
+    if found:
+      return i
+
+    inc(i)
+
+  return -1
+
+# ----------------------------------------------------------------------------------------
+#                                    Binary
+# ----------------------------------------------------------------------------------------
+
 proc extractArchive(archivePath, destDir: string): bool =
   ## Safely extracts tar.gz, tar.xz, or zip archives using host system utilities.
   debug "extractArchive: " & archivePath
@@ -77,6 +136,10 @@ proc installRawBinary(pkgName, downloadPath: string) =
   finally:
     if dirExists(extractWorkspace):
       try: removeDir(extractWorkspace) except CatchableError: discard
+
+# ----------------------------------------------------------------------------------------
+#                                    AppImage
+# ----------------------------------------------------------------------------------------
 
 proc removeDesktopFile(pkgName: string) =
   let uid = getuid()
@@ -221,34 +284,9 @@ proc initDesktopFile(pkgName: string, appPath: string) =
       try: removeDir(cacheWorkspace)
       except CatchableError: discard
 
-proc downloadPkg(downloadUrl: string): Future[string] {.async.} =
-  # Parse filename from the end of the download URL
-  let fileInfo = downloadUrl.splitFile()
-  let assetName = fileInfo.name & fileInfo.ext
-
-  if assetName.len == 0 or fileInfo.ext.len == 0:
-    errorMsg("Could not deduce a valid package filename from URL: " & downloadUrl)
-    return ""
-
-  infoMsg("Downloading package \'" & assetName & "\'...")
-  let client = newAsyncHttpClient()
-  client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
-  client.timeout = 35000
-
-  try:
-    let uid = getuid()
-    let cacheDir = getTempDir() / "nova-cache-" & $uid
-    createDir(cacheDir)
-    let destFile = cacheDir / assetName
-
-    await client.downloadFile(downloadUrl, destFile)
-    debug "Downloaded package to: " & destFile
-    return destFile
-  except CatchableError as e:
-    errorMsg("Failed to download package binary: " & e.msg)
-    return ""
-  finally:
-    client.close()
+# ----------------------------------------------------------------------------------------
+#                                    Install Package
+# ----------------------------------------------------------------------------------------
 
 proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   let pkgName = pkgEntry.getOrDefault("pkg_name").getStr("")
@@ -328,104 +366,15 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   of Source:
     warnMsg("Build pipelines are not yet natively supported.")
 
-proc removePkg(pkgMan: string, targetStr: string) =
-  debug "removePkg"
-  let repoList = loadOrCreateRepoList(repoFile)
-  let targetLower = targetStr.toLowerAscii()
-
-  # Check if target is already in the manifest
-  for entry in repoList:
-    let foundInManifest =
-      (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetLower) or 
-      (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetLower)
-
-    if not foundInManifest:
-      continue
-
-    debug "Found package \'", targetStr, "\' in manifest."
-
-    let pkgName = entry.getOrDefault("pkg_name").getStr("")
-    let pkgType =
-      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
-      except ValueError: Binary
-
-    # Get currently installed version
-    let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-    if installedVer.len == 0:
-      errorMsg("Package '" & pkgName & "' is not installed.")
-      quit(1)
-
-    # Remove Packages by Type
-    case pkgType
-    of Deb, Rpm, Pacman:
-      infoMsg("Uninstalling native package...")
-      let exitCode = runNativeCommand(pkgMan, actRemove, pkgName)
-      if exitCode == 0:
-        successMsg("Successfully uninstalled package \'" & pkgName & "\'")
-        quit(0)
-      else:
-        errorMsg("Failed to uninstall package \'" & pkgName & "\'")
-        quit(1)
-
-    of AppImage:
-      infoMsg("Uninstalling AppImage binary...")
-      let localBinDir = os.getHomeDir() / ".local" / "bin"
-      let pkgPath = localBinDir / pkgName
-
-      if fileExists(pkgPath):
-        try:
-          removeFile(pkgPath)
-          #repoList.delete(foundIndex)
-          # saveRepoList(repoFile, repoList) # Uncomment to save changes to file
-          debug "Successfully removed AppImage binary: " & pkgPath
-        except OSError:
-          errorMsg("Failed to delete AppImage binary: " & pkgPath)
-          quit(1)
-      else:
-        warnMsg("AppImage binary did not exist at: " & pkgPath)
-
-      removeDesktopFile(pkgName)
-      successMsg("Successfully removed \'" & pkgName & "\' from the system.")
-      quit(0)
-
-    of Flatpak, Snap:
-      warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
-
-    of Binary:
-      infoMsg("Uninstalling standalone native binary...")
-      let localBinDir = os.getHomeDir() / ".local" / "bin"
-      let pkgPath = localBinDir / pkgName
-
-      if fileExists(pkgPath):
-        try:
-          removeFile(pkgPath)
-          successMsg("Successfully uninstalled binary \'" & pkgName & "\'")
-          quit(0)
-        except OSError:
-          errorMsg("Failed to delete binary path: " & pkgPath)
-          quit(1)
-      else:
-        warnMsg("Binary target did not exist at: " & pkgPath)
-        quit(0)
-
-    of Source:
-      warnMsg("Build pipelines are not yet natively supported.")
-
 proc installPkg(pkgMan: string, targetStr: string) =
+  debug "installPkg"
   let repoList = loadOrCreateRepoList(repoFile)
-  let targetLower = targetStr.toLowerAscii()
 
   # Check if target is already in the manifest
-  for entry in repoList:
-    let foundInManifest =
-      (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetLower) or 
-      (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetLower)
-
-    if not foundInManifest:
-      continue
-
+  let foundIndex = repoList.findInManifest(targetStr)
+  if foundIndex != -1:
     debug "Found package \'", targetStr, "\' in manifest."
-
+    let entry = repoList[foundIndex]
     let pkgName = entry.getOrDefault("pkg_name").getStr("")
     let manifestVer = entry.getOrDefault("version").getStr("")
     let downloadUrl = entry.getOrDefault("download_url").getStr("")
@@ -435,7 +384,7 @@ proc installPkg(pkgMan: string, targetStr: string) =
 
     if pkgName.len == 0 or downloadUrl.len == 0:
       debug "Skipping incomplete or malformed entry in manifest."
-      continue
+      return
 
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
@@ -465,8 +414,8 @@ proc installPkg(pkgMan: string, targetStr: string) =
       styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
       quit(0)
 
-  # If target's not in manifest and it's a Git repo, add it then install
-  if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
+  # If target's not in manifest and it's a Git repo, add repo then install pkg
+  elif getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
     infoMsg("Interpreted target as Git repository.")
     waitFor addGitRepo(pkgMan, targetStr)
 
@@ -479,3 +428,84 @@ proc installPkg(pkgMan: string, targetStr: string) =
         # Install Package
         waitFor installGitPkg(pkgMan, entry)
         quit(0)
+
+# ----------------------------------------------------------------------------------------
+#                                    Remove Package
+# ----------------------------------------------------------------------------------------
+
+proc removePkg(pkgMan: string, targetStr: string) =
+  debug "removePkg"
+  let repoList = loadOrCreateRepoList(repoFile)
+
+  # Check if target is already in the manifest
+  let foundIndex = repoList.findInManifest(targetStr)
+  if foundIndex == -1:
+    debug "Package '" & targetStr & "' not found in manifest."
+    return
+
+  debug "Found package \'", targetStr, "\' in manifest."
+  let entry = repoList[foundIndex]
+  let pkgName = entry.getOrDefault("pkg_name").getStr("")
+  let pkgType =
+    try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+    except ValueError: Binary
+
+  # Get currently installed version
+  let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+  if installedVer.len == 0:
+    errorMsg("Package '" & pkgName & "' is not installed.")
+    quit(1)
+
+  # Remove Packages by Type
+  case pkgType
+  of Deb, Rpm, Pacman:
+    infoMsg("Uninstalling native package...")
+    let exitCode = runNativeCommand(pkgMan, actRemove, pkgName)
+    if exitCode == 0:
+      successMsg("Successfully uninstalled package \'" & pkgName & "\'")
+      quit(0)
+    else:
+      errorMsg("Failed to uninstall package \'" & pkgName & "\'")
+      quit(1)
+
+  of AppImage:
+    infoMsg("Uninstalling AppImage binary...")
+    let localBinDir = os.getHomeDir() / ".local" / "bin"
+    let pkgPath = localBinDir / pkgName
+
+    if fileExists(pkgPath):
+      try:
+        removeFile(pkgPath)
+        debug "Successfully removed AppImage binary: " & pkgPath
+      except OSError:
+        errorMsg("Failed to delete AppImage binary: " & pkgPath)
+        quit(1)
+    else:
+      warnMsg("AppImage binary did not exist at: " & pkgPath)
+
+    removeDesktopFile(pkgName)
+    successMsg("Successfully removed \'" & pkgName & "\' from the system.")
+    quit(0)
+
+  of Flatpak, Snap:
+    warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
+
+  of Binary:
+    infoMsg("Uninstalling standalone native binary...")
+    let localBinDir = os.getHomeDir() / ".local" / "bin"
+    let pkgPath = localBinDir / pkgName
+
+    if fileExists(pkgPath):
+      try:
+        removeFile(pkgPath)
+        successMsg("Successfully uninstalled binary \'" & pkgName & "\'")
+        quit(0)
+      except OSError:
+        errorMsg("Failed to delete binary path: " & pkgPath)
+        quit(1)
+    else:
+      warnMsg("Binary target did not exist at: " & pkgPath)
+      quit(0)
+
+  of Source:
+    warnMsg("Build pipelines are not yet natively supported.")
