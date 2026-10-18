@@ -5,50 +5,91 @@
 #
 # ========================================================================================
 
-proc normalizeVersion*(asset: string): string =
+proc stripAnsi*(s: string): string =
+  ## Removes ANSI color/style escape sequences from the string.
   var i = 0
-  while i < asset.len:
-    # Look for digits, or a 'v' followed by a digit
-    let isStart = asset[i] in Digits or 
-      (asset[i] == 'v' and i + 1 < asset.len and asset[i+1] in Digits)
+  while i < s.len:
+    # Look for the ESC character
+    if s[i] == '\e' or (s[i] == '\\' and i + 1 < s.len and s[i+1] == 'e'):
+      if s[i] == '\\': i += 1
+      i += 1 # skip 'e'
+      if i < s.len and i < s.len and s[i] == '[':
+        while i < s.len and s[i] != 'm': i += 1
+        i += 1 # skip 'm'
+    else:
+      result.add(s[i])
+      i += 1
 
-    # Ensure it's bounded by a standard separator not 'x86_64' or 'linux64'
-    let isBounded = i == 0 or asset[i-1] in {'-', '_', '.', ' '}
+proc normalizeVersion*(asset: string): string =
+  # Clean ANSI escape styles and trim whitespace
+  var cleanAsset = asset.stripAnsi().strip()
+  
+  # Remove architecture-specific numbers to prevent false major-version picking (e.g., x86_64 -> x86_arch)
+  for arch in ["x86_64", "x86-64", "amd64", "arm64", "riscv64", "aarch64", "linux64", "anylinux"]:
+    cleanAsset = cleanAsset.replace(arch, "arch")
+
+  # Fast exclusion check for pure noise files
+  let lowerAsset = cleanAsset.toLowerAscii()
+  if "linux" in lowerAsset and not anyIt(["-4.", "-v0", "_v0", "linux-arch-1.", "fedora-v"], it in lowerAsset):
+    if not anyIt(["0.", "1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9."], it in lowerAsset):
+      return ""
+
+  var i = 0
+  while i < cleanAsset.len:
+    var offset = 0
+    if cleanAsset[i] in {'v', 'V'}:
+      offset = 1
+      if i + 1 < cleanAsset.len and cleanAsset[i+1] == '.': offset = 2
+    
+    let digitIdx = i + offset
+    let isStart = digitIdx < cleanAsset.len and cleanAsset[digitIdx].isDigit
+    let isBounded = i == 0 or cleanAsset[i-1] in {'-', '_', '.', ' '} or (cleanAsset[i] in {'v', 'V'} and cleanAsset[i-1].isAlphaAscii)
 
     if isStart and isBounded:
-      # If it's a leading 'v', skip past it to keep the output purely numeric
-      var nextIdx = i
-      if asset[nextIdx] == 'v': inc(nextIdx)
-
-      # Collect only numeric components (digits and dots)
+      var nextIdx = digitIdx
       var cleanVer = ""
       var versionDots = 0
+      
+      while nextIdx < cleanAsset.len:
+        let c = cleanAsset[nextIdx]
+        
+        # Cease ingestion if hitting system distro payload metadata tags
+        if c in {'-', '_', '+'}:
+          if nextIdx + 1 < cleanAsset.len:
+            let tail = cleanAsset[nextIdx+1 .. ^1].toLowerAscii()
+            if tail.startsWith("linux") or tail.startsWith("arch") or tail.startsWith("armhf") or
+               tail.startsWith("ubuntu") or tail.startsWith("ghrelease") or tail.startsWith("fc"):
+              break
+        
+        if c.isDigit or c == '.':
+          if c == '.': inc(versionDots)
+          cleanVer.add(c)
+          inc(nextIdx)
+        else:
+          break
 
-      while nextIdx < asset.len and asset[nextIdx] in (Digits + {'.'}):
-        # Only count this as a valid version divider if it's a dot 
-        # that is immediately followed by another digit (e.g., .8 or .2)
-        if asset[nextIdx] == '.' and nextIdx + 1 < asset.len and asset[nextIdx+1] in Digits:
-          inc(versionDots)
-        cleanVer.add(asset[nextIdx])
-        inc(nextIdx)
-
-      # Strip trailing dot from file extensions
       cleanVer = cleanVer.strip(chars = {'.'})
 
-      # Must have at least one internal version dot divider, and end with a digit
-      if versionDots >= 1 and cleanVer.len > 0 and cleanVer[cleanVer.high] in Digits:
-        # Split into segments to strip leading zeros and enforce semver lengths
+      if cleanVer.len > 0:
+        # Ignore false-positive isolated numbers inside string noise configurations (e.g., ubu24)
+        if versionDots == 0 and cleanVer.len <= 2:
+          let trailingContext = cleanAsset[nextIdx .. ^1].toLowerAscii()
+          if "arch" in trailingContext or "linux" in trailingContext or "ubu" in lowerAsset:
+            i = nextIdx
+            continue
+
         let rawSegments = cleanVer.split('.')
         var cleanSegments: seq[string] = @[]
         
-        for idx, seg in rawSegments:
-          # Strip leading zeros, but preserve a lone "0"
+        for seg in rawSegments:
+          if seg.len == 0: continue
           var normalizedSeg = seg.strip(leading = true, trailing = false, chars = {'0'})
           if normalizedSeg.len == 0: normalizedSeg = "0"
           cleanSegments.add(normalizedSeg)
-          
-          # Cap version segments at 3 elements (Major.Minor.Patch)
           if cleanSegments.len == 3: break
+        
+        while cleanSegments.len < 3:
+          cleanSegments.add("0")
           
         return cleanSegments.join(".")
 
