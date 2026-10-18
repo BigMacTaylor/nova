@@ -453,8 +453,8 @@ proc removePkg(pkgMan: string, targetStr: string) =
   # Get currently installed version
   let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
   if installedVer.len == 0:
-    errorMsg("Package '" & pkgName & "' is not installed.")
-    quit(1)
+    debug "Package '" & pkgName & "' is not installed."
+    return
 
   # Remove Packages by Type
   case pkgType
