@@ -228,7 +228,7 @@ proc getMountAppImageVer(appImagePath: string): string =
 proc getAppImageVersion(appName: string): string =
   ## Scrapes the static binary declaration of an AppImage payload 
   ## to extract its internal version signature safely.
-  debug "get AppImage version"
+  debug "getAppImageVersion"
   let appsDir = os.getHomeDir() / ".local" / "bin"
   let appImagePath = appsDir / appName
 
@@ -256,9 +256,9 @@ proc getBinaryVersion(pkgName: string): string =
   return "1.0.0" # Clean operational fallback string if flag fails
 
 proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
-  debug "get installed version"
+  debug "getInstalledVersion"
   case pkgType
-  of Deb, Rpm:
+  of Deb, Rpm, Pacman:
     return normalizeVersion(getNativeVersion(pkgMan, pkgName))
   of AppImage:
     return normalizeVersion(getAppImageVersion(pkgName))
@@ -395,7 +395,6 @@ proc cleanKeywords(name: string): string =
     if idx > 0:
       result = result[0 ..< idx]
 
-
 proc getPackageName*(asset: string): string =
   # Edge Case: Pure version strings
   if asset.len == 0: return "unknown"
@@ -459,4 +458,3 @@ proc getPackageName*(asset: string): string =
   processedName = processedName.strip(chars = {'-'})
 
   return if processedName.len > 0: processedName else: "unknown"
-

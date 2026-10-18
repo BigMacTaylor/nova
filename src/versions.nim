@@ -58,33 +58,26 @@ proc listPkgVersions(pkgMan: string, targetStr: string) =
       case pkgMan
       of "apt", "nala": Deb
       of "dnf", "yum", "zypper": Rpm
+      of "pacman": Pacman
       else: Binary
     versions.add((nativeType, nativeVer))
 
   # Check if target is already in the manifest
-  for entry in repoList:
-    let matchName = entry.getOrDefault("pkg_name").getStr("").toLowerAscii()
-    let matchRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
-    let searchStr = targetStr.toLowerAscii()
+  let foundIndex = repoList.findInManifest(targetStr)
+  if foundIndex != -1:
+    debug "Found package \'", targetStr, "\' in manifest."
+    let entry = repoList[foundIndex]
+    let pkgType =
+      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+      except ValueError: Binary
 
-    if matchName == searchStr or matchRepo == searchStr:
-      debug "Found package '", targetStr, "' in manifest."
-
+    if pkgType notin {Deb, Rpm, Pacman}:
       pkgName = entry.getOrDefault("pkg_name").getStr(targetStr)
-      let pkgType =
-        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
-        except ValueError: Binary
-
-      if pkgType == Deb or pkgType == Rpm:
-        break
 
       # Get currently installed version
       installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-
-      # Check if it's missing
-      if installedVer != "":
+      if installedVer.len > 0:
         versions.add((pkgType, installedVer)) 
-      break
 
   # Check for Flatpak Installation
   let flatpakVer = getFlatpakVersion(pkgName)

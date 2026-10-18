@@ -84,26 +84,24 @@ proc showPkgStatus(pkgMan: string, targetStr: string) =
   let repoList = loadOrCreateRepoList(repoFile)
 
   # Check if target is already in the manifest
-  for entry in repoList:
-    if (entry.hasKey("pkg_name") and entry["pkg_name"].getStr().toLowerAscii() == targetStr.toLowerAscii()) or 
-       (entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == targetStr.toLowerAscii()):
-      debug "Found package \'", targetStr, "\' in manifest."
-      let pkgName = entry.getOrDefault("pkg_name").getStr("")
-      let pkgType =
-        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
-        except ValueError: Binary
+  let foundIndex = repoList.findInManifest(targetStr)
+  if foundIndex != -1:
+    debug "Found package \'", targetStr, "\' in manifest."
+    let entry = repoList[foundIndex]
+    let pkgType =
+      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+      except ValueError: Binary
 
-      if pkgType == Deb or pkgType == Rpm:
-        break
+    if pkgType notin {Deb, Rpm, Pacman}:
+      let pkgName = entry.getOrDefault("pkg_name").getStr("")
 
       # Get currently installed version
       let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-      if installedVer.len == 0:
-        debug "Package '" & pkgName & "' not found on host system. Skipping..."
-        break
+      if installedVer.len > 0:
+        printPkgStatus(pkgName, installedVer, "unknown")
+        return
 
-      printPkgStatus(pkgName, installedVer, "unknown")
-      return
+      debug "Package '" & pkgName & "' not found on host system. Skipping..."
 
   # Check if target is natively installed package
   let nativeCmd = getNativeCommand(pkgMan, actStatus, targetStr)
