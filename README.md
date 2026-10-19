@@ -10,12 +10,17 @@ Running `nova refresh` and then `nova upgrade` will automatically search Github 
 
 ### Installation
 
-Download the binary from the [releases page](https://github.com/BigMacTaylor/nova/releases) Make it executable and place it somewhere in your system `$PATH`.
+Download from the [releases page](https://github.com/BigMacTaylor/nova/releases) Extract the binary and place it somewhere in your system `$PATH`.
 
 ```bash
-# Example: move the downloaded file to /usr/local/bin/ and make it executable
-sudo mv ~/Downloads/nova /usr/local/bin/nova
-sudo chmod +x /usr/local/bin/nova
+# Download
+curl -LO https://github.com/BigMacTaylor/nova/releases/download/v0.0.8-beta.1/nova-linux-glibc-amd64.tar.gz
+
+# Extract the binary
+tar -xzf nova-linux-glibc-amd64.tar.gz
+
+# Move to /usr/local/bin/ (system-wide) or ~/local/bin/ (user-only)
+sudo mv ~/nova /usr/local/bin/nova
 ```
 
 ### Usage
