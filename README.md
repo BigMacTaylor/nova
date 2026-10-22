@@ -17,10 +17,10 @@ Download from the [releases page](https://github.com/BigMacTaylor/nova/releases)
 curl -LO https://github.com/BigMacTaylor/nova/releases/download/v0.0.8-beta.1/nova-linux-glibc-amd64.tar.gz
 
 # Extract the binary
-tar -xzf nova-linux-glibc-amd64.tar.gz
+tar -xzf ./nova-linux-glibc-amd64.tar.gz
 
-# Move to /usr/local/bin/ (system-wide) or ~/local/bin/ (user-only)
-sudo mv ~/nova /usr/local/bin/nova
+# Move to /usr/local/bin/ (system-wide) or ~/.local/bin/ (user-only)
+sudo mv ./nova /usr/local/bin/nova
 ```
 
 ### Usage
