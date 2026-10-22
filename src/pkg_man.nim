@@ -58,6 +58,8 @@ proc getPackageManager(): string =
     return "xbps"
   of "gentoo", "funtoo":
     return "emerge"
+  of "glaucus":
+    return "rad"
   else:
     return detectSystemPackageManager()
 

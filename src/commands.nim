@@ -188,6 +188,25 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actHistory:       "echo 'Homebrew does not feature structural transactional tracking history logs.'"
     else: ""
 
+  of "rad":
+    case action
+    of actSearch:        "rad -c search " & target
+    of actInstall:       "rad -c install " & target
+    of actReinstall:     "echo 'Not yet supported.'"
+    of actRemove:        "rad -c remove " & target
+    of actAutoremove:    "rad -c distclean"
+    of actRefresh:       "rad -c sync"
+    of actUpgrade:       "rad -c upgrade"
+    of actInfo:          "rad -c print " & target
+    of actStatus:        "echo 'Not yet supported.'"
+    of actAddRepo:       "rad -c append " & target
+    of actRemoveRepo:    "echo 'Not yet supported.'"
+    of actListRepos:     "rad -c list"
+    of actListInstalled: "rad -c list"
+    of actListUpdates:   "echo 'Not yet supported.'"
+    of actHistory:       "echo 'Not yet supported.'"
+    else: ""
+
   else:
     errorMsg("Package manager '", pkgMan, "' is not currently supported.")
     quit(1)
