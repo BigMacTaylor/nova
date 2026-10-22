@@ -76,7 +76,7 @@ proc main() =
   var p = initOptParser(
     commandLineParams(), 
     shortNoVal = {'h', 'v'}, 
-    longNoVal = @["help", "version", "prefer-musl", "include-prerelease"]
+    longNoVal = @["help", "version", "prefer-musl", "include-prerelease", "no-verify"]
   )
 
   var firstAction = ""
