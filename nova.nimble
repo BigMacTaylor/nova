@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.0.8"
+version       = "0.0.9"
 author        = "BigMacTaylor"
 description   = "A distro-agnostic package manager"
 license       = "MIT"
