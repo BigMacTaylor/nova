@@ -16,7 +16,12 @@ proc downloadPkg(downloadUrl: string): Future[string] {.async.} =
 
   infoMsg("Downloading package \'" & assetName & "\'...")
 
-  let client = newAsyncHttpClient()
+  let ctx = 
+    if disableSSL:
+      newContext(verifyMode = CVerifyNone)
+    else:
+      newContext()
+  let client = newAsyncHttpClient(sslContext = ctx)
   client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
   client.timeout = 35000
 

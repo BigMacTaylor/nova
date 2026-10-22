@@ -59,6 +59,7 @@ Options:
 Options(testing):
   --prefer-musl         Prefer musl over glibc binaires
   --include-prerelease  Allow beta, rc, and nightly versions over stable
+  --no-verify           Disable SSL/TLS verification
 
 Package Management Commands:
   search                Search for a package

@@ -9,8 +9,13 @@ proc getLatestRelease(pkgMan, repoPath: string): Future[Repo] {.async.} =
   infoMsg("Fetching latest release from \'" & repoPath & "\'...")
   let isAmd64 = hostCPU == "amd64"
   let isArm64 = hostCPU == "arm64"
-  let url = "https://api.github.com/repos/" & repoPath & "/releases"
-  let client = newAsyncHttpClient()
+  let url = "http://api.github.com/repos/" & repoPath & "/releases"
+  let ctx = 
+    if disableSSL:
+      newContext(verifyMode = CVerifyNone)
+    else:
+      newContext()
+  let client = newAsyncHttpClient(sslContext = ctx)
   client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
   client.timeout = 30000
 
