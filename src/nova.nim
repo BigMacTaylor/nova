@@ -9,6 +9,7 @@ const version = "0.0.8"
 
 import std/[json, os, posix, osproc, strutils, asyncdispatch]
 import std/[sequtils, httpclient, terminal, unicode, parseopt]
+import std/net
 
 type Action* = enum
   actSearch
@@ -61,6 +62,7 @@ func getDataDir(): string =
 let repoFile = getDataDir() / "repositories.json"
 var preferMusl = false
 var includePrerelease = false
+var disableSSL = false
 
 proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.}
 include /[ui, help, commands, parsers, repo_man, packages]
@@ -101,6 +103,8 @@ proc main() =
         preferMusl = true
       of "include-prerelease":
         includePrerelease = true
+      of "no-verify":
+        disableSSL = true
       else:
         errorMsg("Unknown option \'", p.key, "\'")
         infoMsg("Use -h for help \n")
