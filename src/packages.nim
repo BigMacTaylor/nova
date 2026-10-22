@@ -70,6 +70,7 @@ proc findInManifest(repoList: JsonNode, targetStr: string): int =
 
 proc extractArchive(archivePath, destDir: string): bool =
   ## Safely extracts tar.gz, tar.xz, or zip archives using host system utilities.
+  ## Falls back to 'tar -xf' for zip files if 'unzip' is not installed.
   debug "extractArchive: " & archivePath
   let lowerPath = archivePath.toLowerAscii()
   var cmd = ""
@@ -79,7 +80,10 @@ proc extractArchive(archivePath, destDir: string): bool =
   elif lowerPath.endsWith(".tar.xz") or lowerPath.endsWith(".txz"):
     cmd = "tar -xJf " & quoteShell(archivePath) & " -C " & quoteShell(destDir)
   elif lowerPath.endsWith(".zip"):
-    cmd = "unzip -q " & quoteShell(archivePath) & " -d " & quoteShell(destDir)
+    if findExe("unzip") != "":
+      cmd = "unzip -q " & quoteShell(archivePath) & " -d " & quoteShell(destDir)
+    else:
+      cmd = "tar -xf " & quoteShell(archivePath) & " -C " & quoteShell(destDir)
   else:
     return false
 
