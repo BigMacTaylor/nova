@@ -100,7 +100,11 @@ proc installRawBinary(pkgName, downloadPath: string) =
     createDir(localBinDir)
   if dirExists(extractWorkspace):
     try: removeDir(extractWorkspace) except CatchableError: discard
+
   createDir(extractWorkspace)
+  defer:
+    if dirExists(extractWorkspace):
+      try: removeDir(extractWorkspace) except CatchableError: discard
 
   try:
     if not extractArchive(downloadPath, extractWorkspace):
@@ -141,9 +145,6 @@ proc installRawBinary(pkgName, downloadPath: string) =
   except CatchableError as e:
     errorMsg("Encountered structural error during binary installation: " & e.msg)
     quit(1)
-  finally:
-    if dirExists(extractWorkspace):
-      try: removeDir(extractWorkspace) except CatchableError: discard
 
 # ----------------------------------------------------------------------------------------
 #                                    AppImage
