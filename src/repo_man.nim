@@ -5,18 +5,47 @@
 #
 # ========================================================================================
 
-proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
-  ## Filters and scores assets across one or more releases, returning a completed Repo structure.
+proc matchesArch*(assetName: string, cpuArch: string): bool =
+  ## Returns true if the asset name explicitly matches the requested architecture.
+  let isAmd64 = cpuArch == "amd64"
+  let isArm64 = cpuArch == "arm64"
+  let isArm32 = cpuArch == "arm"
+
+  result =
+    (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
+    (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
+    (isArm32 and ("armv7" in assetName or "armhf" in assetName)) or
+    (not isAmd64 and not isArm64 and not isArm32 and cpuArch in assetName)
+
+proc isUniversal*(assetName: string): bool =
+  ## Returns true if the asset name doesn't include a specific architecture.
+  if "universal" in assetName or "multi" in assetName or
+    "all" in assetName or "noarch" in assetName:
+    return true
+
+  let hasArch =
+    assetName.contains("x86_64") or
+    assetName.contains("amd64") or
+    assetName.contains("arm64") or
+    assetName.contains("aarch64") or
+    assetName.contains("arm") or
+    assetName.contains("386") or
+    assetName.contains("mips")
+                         
+  result = not hasArch
+
+proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan, cpuArch: string, 
+  includePrereleases, preferMusl: bool): RepoData =
+  ## Filters and scores assets from releases, returning a completed RepoData structure.
   # Fallback return empty
-  result = (name: repoPath, pkgName: "", pkgType: Binary, version: "", downloadUrl: "")
+  result = (name: "", prerelease: false, preferMusl: false, pkgName: "",
+    pkgType: Binary, version: "", downloadUrl: "")
 
   var bestRelease: JsonNode = nil
   var bestAsset: JsonNode = nil
   var bestScore = -1
   var finalPkgType = Binary
 
-  let isAmd64 = hostCPU == "amd64"
-  let isArm64 = hostCPU == "arm64"
   let pkgExtension = case pkgMan
     of "apt", "nala": "deb"
     of "dnf", "yum", "zypper": "rpm"
@@ -44,7 +73,7 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
     var releaseScore = 200 # Default to Stable
 
     # Filter pre-releases if not included
-    if not includePrerelease:
+    if not includePrereleases:
       if isPrerelease: 
         continue
       const preReleaseKeywords = ["alpha", "beta", "dev", "nightly", "preview", "rc"]
@@ -67,12 +96,9 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
 
       # Block non-Linux formats and tags
       const blockedTags = [
-        ".exe", ".msi", ".dmg", ".pkg",
-        "windows", "win32", "win64",
-        "macos", "darwin", "apple", "osx",
-        "freebsd", "openbsd", "netbsd", "bsd",
-        "android", "haiku", "dragonfly",
-        "solaris", "sunos", "illumos", "omnios",
+        ".exe", ".msi", ".dmg", ".pkg", "windows", "win32", "win64",
+        "macos", "darwin", "apple", "osx", "freebsd", "openbsd", "netbsd", "bsd",
+        "android", "haiku", "dragonfly", "solaris", "sunos", "illumos", "omnios"
       ]
       var skipAsset = false
       for tag in blockedTags:
@@ -83,27 +109,11 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
       if skipAsset:
         continue
 
-      # Architecture & Package Format detection
       # Prefered Format Weight (0 to 30)
       var formatScore = -1
       var detectedType: PkgType
-
-      let matchesArch =
-        (isAmd64 and ("amd64" in assetName or "x86_64" in assetName)) or
-        (isArm64 and ("arm64" in assetName or "aarch64" in assetName)) or
-        ("all" in assetName or "noarch" in assetName) or
-        (not isAmd64 and not isArm64 and hostCPU in assetName)
-
-      let isUniversal =
-        "universal" in assetName or 
-        "multi" in assetName or
-        not (assetName.contains("x86_64") or 
-          assetName.contains("amd64") or 
-          assetName.contains("arm64") or 
-          assetName.contains("aarch64") or 
-          assetName.contains("386") or 
-          assetName.contains("arm") or
-          assetName.contains("mips"))
+      let archMatch = matchesArch(assetName, cpuArch)
+      let universalMatch = isUniversal(assetName)
 
       # Native packages (.deb, .rpm, .pkg.tar.zst)
       if pkgExtension.len > 0 and assetName.endsWith("." & pkgExtension):
@@ -111,38 +121,23 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
           of "deb": Deb
           of "rpm": Rpm
           else: Pacman
-        if matchesArch:
-          debug "Found matching package asset: ", assetName
-          formatScore = 30  # Highest priority format
-        elif isUniversal:
-          debug "Found universal package asset: ", assetName
-          formatScore = 28  # Slightly lower score so exact matches win if present
-        else:
-          continue
+        if archMatch: formatScore = 30 # Highest priority
+        elif universalMatch: formatScore = 28 # Slightly lower score so exact matches win
+        else: continue
 
       # Appimages
       elif assetName.endsWith(".appimage"):
         detectedType = AppImage
-        if matchesArch:
-          debug "Found matching AppImage asset: ", assetName
-          formatScore = 20  # Mid priority format
-        elif isUniversal:
-          debug "Found universal AppImage asset: ", assetName
-          formatScore = 18  # Slightly lower score so exact matches win if present
-        else:
-          continue
+        if archMatch: formatScore = 20 # Mid priority
+        elif universalMatch: formatScore = 18 # Slightly lower score so exact matches win
+        else: continue
 
       # Binaries
       elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
         detectedType = Binary
-        if matchesArch:
-          debug "Found matching binary archive: ", assetName
-          formatScore = 10  # Low priority binary archive
-        elif isUniversal:
-          debug "Found universal binary archive: ", assetName
-          formatScore = 8
-        else:
-          continue
+        if archMatch: formatScore = 10 # Low priority
+        elif universalMatch: formatScore = 8 # Slightly lower score so exact matches win
+        else: continue
 
       # Skip documentation, shasums, or source code
       else:
@@ -179,6 +174,8 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
 
     return (
       name: repoPath,
+      prerelease: includePrereleases,
+      preferMusl: preferMusl,
       pkgName: getPackageName(bestAsset["name"].getStr()),
       pkgType: finalPkgType,
       version: normalizeVersion(bestRelease["tag_name"].getStr()),
@@ -186,7 +183,7 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan: string): Repo =
     )
   return result
 
-proc getReleasesJson(repoPath: string): Future[JsonNode] {.async.} =
+proc getReleasesJson(repoPath: string, includePrereleases: bool): Future[JsonNode] {.async.} =
   ## Handles API network routing.
   let ctx = if disableSSL: newContext(verifyMode = CVerifyNone) else: newContext()
   let client = newAsyncHttpClient(sslContext = ctx)
@@ -194,7 +191,7 @@ proc getReleasesJson(repoPath: string): Future[JsonNode] {.async.} =
   client.timeout = 30000
 
   let url =
-    if includePrerelease:
+    if includePrereleases:
      "https://api.github.com/repos/" & repoPath & "/releases"
     else:
      "https://api.github.com/repos/" & repoPath & "/releases/latest"
@@ -203,7 +200,7 @@ proc getReleasesJson(repoPath: string): Future[JsonNode] {.async.} =
     let response = await client.getContent(url)
     result = parseJson(response)
   except HttpRequestError as e:
-    if not includePrerelease and "404" in e.msg:
+    if not includePrereleases and "404" in e.msg:
       debug "No latest release found, searching for releases..."
       let fallbackUrl = "https://api.github.com/repos/" & repoPath & "/releases"
       try:
@@ -216,16 +213,17 @@ proc getReleasesJson(repoPath: string): Future[JsonNode] {.async.} =
   finally:
     client.close()
 
-proc getRepoData(pkgMan, repoPath: string): Future[Repo] {.async.} =
+proc getRepoData(pkgMan, repoPath: string, prerelease, preferMusl: bool): Future[RepoData] {.async.} =
   ## Fetches and scores assets in repo to discover an installable package.
   infoMsg("Fetching latest release for \'" & repoPath & "\'...")
 
   # Fallback return empty
-  result = (name: repoPath, pkgName: "", pkgType: Binary, version: "", downloadUrl: "")
-  
+  result = (name: "", prerelease: false, preferMusl: false, pkgName: "",
+    pkgType: Binary, version: "", downloadUrl: "")
+
   var releasesJson: JsonNode
   try:
-    releasesJson = await getReleasesJson(repoPath)
+    releasesJson = await getReleasesJson(repoPath, prerelease)
   except JsonParsingError:
     errorMsg("Failed to parse response. You might be rate-limited by GitHub API.")
     return result
@@ -234,7 +232,7 @@ proc getRepoData(pkgMan, repoPath: string): Future[Repo] {.async.} =
     return result
 
   # Get best matching asset from releases
-  let matchedRepo = getBestAsset(releasesJson, repoPath, pkgMan)
+  let matchedRepo = getBestAsset(releasesJson, repoPath, pkgMan, hostCPU, prerelease, preferMusl)
   if matchedRepo.downloadUrl.len > 0:
     successMsg("Found installable package \'", matchedRepo.pkgName, "\' version: ", matchedRepo.version)
     return matchedRepo
@@ -287,7 +285,7 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
     else:
       debug(pkgName & " [" & installedVer & "] is already current.")
 
-  successMsg("All git packages are up to date.")
+  successMsg("All packages are up to date!")
 
 # ----------------------------------------------------------------------------------------
 #                                    Refresh
@@ -305,13 +303,15 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
 
   infoMsg("Checking Git repos for updates...")
 
-  var futures: seq[Future[Repo]] = @[]
+  var futures: seq[Future[RepoData]] = @[]
   var mappedRepos: seq[JsonNode] = @[]
 
   for entry in repoList:
     if entry.hasKey("repo"):
       let repoPath = entry["repo"].getStr()
-      futures.add(getRepoData(pkgMan, repoPath))
+      let prerelease = entry.getOrDefault("prerelease").getBool(false)
+      let preferMusl = entry.getOrDefault("prefer_musl").getBool(false)
+      futures.add(getRepoData(pkgMan, repoPath, prerelease, preferMusl))
       mappedRepos.add(entry)
 
   try:
@@ -345,11 +345,11 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
   if updatedCount > 0:
     try:
       writeFile(repoFile, repoList.pretty())
-      successMsg("Successfully updated manifest.")
     except IOError:
       errorMsg("Could not save changes to manifest.")
-  else:
-    successMsg("All packages are already up to date!")
+      return
+
+  successMsg("Successfully updated manifest.")
 
 # ----------------------------------------------------------------------------------------
 #                                    Remove
@@ -399,13 +399,15 @@ proc addGitRepo(pkgMan, repoInput: string) {.async.} =
       infoMsg "Repository \'" & repoPath & "\' is already in manifest."
       return
 
-  let repoData = await getRepoData(pkgMan, repoPath)
+  let repoData = await getRepoData(pkgMan, repoPath, prereleaseFlag, preferMuslFlag)
   if repoData.version == "":
     errorMsg("Could not add repo \'" & repoPath & "\'")
     quit(1)
 
   let newEntry = %*{
     "repo": repoData.name,
+    "prerelease": repoData.prerelease,
+    "prefer_musl": repoData.preferMusl,
     "pkg_name": repoData.pkgName,
     "pkg_type": repoData.pkgType,
     "version": repoData.version,

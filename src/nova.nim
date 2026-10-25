@@ -47,12 +47,14 @@ type PkgType* = enum
   Binary
   Source
 
-type Repo* = tuple
-  name: string # GitHub Repository Name (e.g., "sharkdp/bat")
-  pkgName: string # Native Package Name (e.g., "bat")
-  pkgType: PkgType # Deb, Binary, AppImage etc.
-  version: string # Release Tag (e.g., "v0.24.0")
-  downloadUrl: string # Download URL
+type RepoData* = tuple
+  name: string         # Repository Name (e.g., "sharkdp/bat")
+  prerelease: bool     # Include repos tagged prerelease
+  preferMusl: bool     # Prefer musl over glibc
+  pkgName: string      # Native Package Name (e.g., "bat")
+  pkgType: PkgType     # Deb, Binary, AppImage etc.
+  version: string      # Release Tag (e.g., "v0.24.0")
+  downloadUrl: string  # Download URL
 
 func getDataDir(): string =
   # Get XDG_DATA_HOME or default "~/.local/share"
@@ -60,8 +62,8 @@ func getDataDir(): string =
   return dir / "nova"
 
 let repoFile = getDataDir() / "repositories.json"
-var preferMusl = false
-var includePrerelease = false
+var preferMuslFlag = false
+var prereleaseFlag = false
 var disableSSL = false
 
 proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.}
@@ -100,9 +102,9 @@ proc main() =
         echo "nova version: " & version
         quit(0)
       of "prefer-musl":
-        preferMusl = true
+        preferMuslFlag = true
       of "include-prerelease":
-        includePrerelease = true
+        prereleaseFlag = true
       of "no-verify":
         disableSSL = true
       else:
