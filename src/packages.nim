@@ -411,7 +411,7 @@ proc installPkg(pkgMan: string, targetStr: string) =
       else:
         infoMsg(
           "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
-            ") ➡️ Tracked (" & manifestVer & ")"
+            ") -> Tracked (" & manifestVer & ")"
         )
 
       # Install Package

@@ -208,7 +208,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     else: ""
 
   else:
-    errorMsg("Package manager '", pkgMan, "' is not currently supported.")
+    errorMsg("Package manager \'", pkgMan, "\' is not currently supported.")
     quit(1)
 
 proc runNativeCommand(pkgMan: string, action: Action, targetStr: string): int =
