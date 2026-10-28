@@ -129,7 +129,7 @@ let assetTestCases = @[
   (asset: "zoxide-0.9.4-aarch64-unknown-linux-musl.tar.gz", name: "zoxide", ver: "0.9.4"),
 ]
 
-echo "\n  Nova - Unit Tests"
+echo "\n  Nova - Test Suite for parsers"
 
 suite "ANSI Escape Sequence Tests":
   test "Strip standard escape sequences (\\e)":

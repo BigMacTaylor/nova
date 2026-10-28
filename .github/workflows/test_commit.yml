@@ -36,6 +36,10 @@ jobs:
 
       - name: Compile and Run Automated Tests
         run: |
-          echo "Compiling functional test binary..."
-          # -d:release flag can be dropped here for faster iterative development feedback
-          nim c -r --colors:on tests/t_parser.nim
+          echo "Compiling all test files..."
+          for test_file in tests/t_*.nim; do
+            if [ -f "$test_file" ]; then
+              echo "Executing: $test_file"
+              nim c -r --colors:on "$test_file" || exit 1
+            fi
+          done
