@@ -147,9 +147,11 @@ suite "Repo Parsing Tests":
     check(asset.downloadUrl == "https://github.com/fastfetch-cli/fastfetch/releases/download/2.70.0/fastfetch-linux-armv7l.tar.gz")
 
     asset = getBestAsset(yaziJson, "sxyazi/yazi", "apt", "arm64", false, false)
+    check(asset.pkgType == Deb)
     check(asset.downloadUrl == "https://github.com/sxyazi/yazi/releases/download/v26.9.1/yazi-aarch64-unknown-linux-gnu.deb")
 
     asset = getBestAsset(yaziJson, "sxyazi/yazi", "apt", "arm64", true, false)
+    check(asset.pkgType == Deb)
     check(asset.downloadUrl == "https://github.com/sxyazi/yazi/releases/download/nightly/yazi-aarch64-unknown-linux-gnu.deb")
 
   test "Pre-Release Filtering":
