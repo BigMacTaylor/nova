@@ -403,7 +403,7 @@ proc installPkg(pkgMan: string, targetStr: string) =
 
     # Check if it's missing or out of date
     let isMissing = installedVer.len == 0
-    let isStale = (manifestVer.len > 0) and (installedVer != manifestVer)
+    let isStale = (manifestVer.len > 0) and (compareVersionStrings(manifestVer, installedVer) == 1)
 
     if isMissing or isStale:
       if isMissing:
