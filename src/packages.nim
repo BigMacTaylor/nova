@@ -50,13 +50,14 @@ proc findInManifest(repoList: JsonNode, targetStr: string): int =
   ## Iterates through the manifest and returns the index of the matching package.
   ## Returns -1 if no matching package or repository name is found.
   let targetLower = targetStr.toLowerAscii()
+  let targetRepo = getRepoName(targetLower)
   var i = 0
 
   for entry in repoList:
-    let matchName = entry.getOrDefault("pkg_name").getStr("").toLowerAscii()
-    let matchRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
+    let entryName = entry.getOrDefault("pkg_name").getStr("").toLowerAscii()
+    let entryRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
 
-    if matchName == targetLower or matchRepo == targetLower:
+    if entryName == targetLower or entryRepo == targetRepo:
       return i
 
     inc(i)
