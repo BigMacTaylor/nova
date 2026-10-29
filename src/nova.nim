@@ -64,7 +64,7 @@ func getDataDir(): string =
 let repoFile = getDataDir() / "repositories.json"
 var preferMuslFlag = false
 var prereleaseFlag = false
-var disableSSL = false
+var disableSslFlag = false
 
 proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.}
 include /[ui, help, commands, parsers, repo_man, packages]
@@ -106,7 +106,7 @@ proc main() =
       of "include-prerelease":
         prereleaseFlag = true
       of "no-verify":
-        disableSSL = true
+        disableSslFlag = true
       else:
         errorMsg("Unknown option \'", p.key, "\'")
         infoMsg("Use -h for help \n")

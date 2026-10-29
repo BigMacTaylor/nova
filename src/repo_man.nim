@@ -185,7 +185,7 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan, cpuArch: string,
 
 proc getReleasesJson(repoPath: string, includePrereleases: bool): Future[JsonNode] {.async.} =
   ## Handles API network routing.
-  let ctx = if disableSSL: newContext(verifyMode = CVerifyNone) else: newContext()
+  let ctx = if disableSslFlag: newContext(verifyMode = CVerifyNone) else: newContext()
   let client = newAsyncHttpClient(sslContext = ctx)
   client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
   client.timeout = 30000

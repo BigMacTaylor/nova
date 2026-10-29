@@ -7,23 +7,22 @@
 
 proc downloadPkg(downloadUrl: string): Future[string] {.async.} =
   # Parse filename from the end of the download URL
-  let fileInfo = downloadUrl.splitFile()
-  let assetName = fileInfo.name & fileInfo.ext
+  let assetName = downloadUrl.extractFilename()
 
-  if assetName.len == 0 or fileInfo.ext.len == 0:
+  if assetName.len == 0:
     errorMsg("Could not deduce a valid package filename from URL: " & downloadUrl)
     return ""
 
   infoMsg("Downloading package \'" & assetName & "\'...")
 
   let ctx = 
-    if disableSSL:
+    if disableSslFlag:
       newContext(verifyMode = CVerifyNone)
     else:
       newContext()
   let client = newAsyncHttpClient(sslContext = ctx)
   client.headers = newHttpHeaders({"User-Agent": "Nova-Package-Manager"})
-  client.timeout = 35000
+  client.timeout = 30000
 
   try:
     let uid = getuid()
