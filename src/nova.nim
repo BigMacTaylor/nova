@@ -5,7 +5,7 @@
 #
 # ========================================================================================
 
-const version = "0.0.9"
+const version = "0.1.0"
 
 import std/[json, os, posix, osproc, strutils, asyncdispatch]
 import std/[sequtils, httpclient, terminal, unicode, parseopt]
