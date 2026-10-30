@@ -133,7 +133,10 @@ proc getBestAsset*(releasesJson: JsonNode, repoPath, pkgMan, cpuArch: string,
         else: continue
 
       # Binaries
-      elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tar.xz") or assetName.endsWith(".zip") or not assetName.contains("."):
+      elif assetName.endsWith(".tar.gz") or assetName.endsWith(".tgz") or
+        assetName.endsWith(".tar.xz") or assetName.endsWith(".txz") or
+        assetName.endsWith(".zip") or not assetName.contains("."):
+
         detectedType = Binary
         if archMatch: formatScore = 10 # Low priority
         elif universalMatch: formatScore = 8 # Slightly lower score so exact matches win

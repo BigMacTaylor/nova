@@ -89,61 +89,77 @@ proc extractArchive(archivePath, destDir: string): bool =
 
   return execCmd(cmd) == 0
 
-proc installRawBinary(pkgName, downloadPath: string) =
-  ## Extracts an archive, isolates the exact executable payload, and places it in ~/.local/bin
-  infoMsg("Installing standalone raw binary pipeline...")
-  let uid = getuid()
+proc installBinary(pkgName, downloadPath: string) =
+  ## Extracts an archive or installs a raw binary to ~/.local/bin
+  infoMsg("Installing standalone binary...")
   let localBinDir = os.getHomeDir() / ".local" / "bin"
-  let extractWorkspace = getTempDir() / "nova-binary-extract-" & $uid
 
   if not dirExists(localBinDir):
     createDir(localBinDir)
-  if dirExists(extractWorkspace):
-    try: removeDir(extractWorkspace) except CatchableError: discard
 
-  createDir(extractWorkspace)
-  defer:
+  let lowerPath = downloadPath.toLowerAscii()
+  let isArchive =
+    lowerPath.endsWith(".tar.gz") or lowerPath.endsWith(".tgz") or 
+    lowerPath.endsWith(".tar.xz") or lowerPath.endsWith(".txz") or 
+    lowerPath.endsWith(".zip")
+
+  var discoveredBinary = ""
+
+  if isArchive:
+    let uid = getuid()
+    let extractWorkspace = getTempDir() / "nova-binary-extract-" & $uid
+
     if dirExists(extractWorkspace):
       try: removeDir(extractWorkspace) except CatchableError: discard
+    createDir(extractWorkspace)
+
+    try:
+      if not extractArchive(downloadPath, extractWorkspace):
+        errorMsg("Failed to extract binary archive.")
+        quit(1)
+
+      # Scan the workspace for files with execution permissions
+      for path in walkDirRec(extractWorkspace, yieldFilter = {pcFile}):
+        let filePerms = getFilePermissions(path)
+        let isExecutable = fpUserExec in filePerms or fpGroupExec in filePerms
+        let filename = splitFile(path).name.toLowerAscii()
+
+        # Filter out documentation or shell scripts
+        if isExecutable and not filename.endsWith(".md") and not filename.endsWith(".txt") and not filename.endsWith(".sh"):
+          # Match target package explicitly, or settle for the first executable found
+          if pkgName.toLowerAscii() in filename:
+            discoveredBinary = path
+            break
+          if discoveredBinary.len == 0:
+            discoveredBinary = path
+
+    except CatchableError as e:
+      errorMsg("Encountered error during binary extraction: " & e.msg)
+      quit(1)
+    finally:
+      if dirExists(extractWorkspace):
+        try: removeDir(extractWorkspace) except CatchableError: discard
+  else:
+    # Treat the download path directly as a raw uncompressed binary
+    discoveredBinary = downloadPath
 
   try:
-    if not extractArchive(downloadPath, extractWorkspace):
-      errorMsg("Failed to decompress archive wrapper payload cleanly.")
-      quit(1)
-
-    var discoveredBinary = ""
-    # Scan the workspace for unextended files with user/group execution permissions
-    for path in walkDirRec(extractWorkspace, yieldFilter = {pcFile}):
-      let filePerms = getFilePermissions(path)
-      let isExecutable = fpUserExec in filePerms or fpGroupExec in filePerms
-      let filename = splitFile(path).name.toLowerAscii()
-
-      # Filter out documentation noise or common text descriptors
-      if isExecutable and not filename.endsWith(".md") and not filename.endsWith(".txt") and not filename.endsWith(".sh"):
-        # Match target package context explicitly, or settle for the first logical executable
-        if pkgName.toLowerAscii() in filename:
-          discoveredBinary = path
-          break
-        if discoveredBinary.len == 0:
-          discoveredBinary = path
-
     if discoveredBinary.len > 0 and fileExists(discoveredBinary):
       let finalDest = localBinDir / pkgName
       copyFile(discoveredBinary, finalDest)
       
-      # Enforce uniform binary system execution permissions (0o755)
-      let perms = getFilePermissions(finalDest)
-      setFilePermissions(finalDest, perms + {fpUserExec, fpGroupExec, fpOthersExec})
+      # Set binary execution permissions (0o755)
+      setFilePermissions(finalDest, {fpUserRead, fpUserWrite, fpUserExec, fpGroupRead, fpGroupExec, fpOthersRead, fpOthersExec})
 
       successMsg("Successfully installed binary to " & finalDest)
       infoMsg("Ensure '" & localBinDir & "' is exported to your system $PATH ")
       quit(0)
     else:
-      errorMsg("Could not find a valid execution payload target inside the archive workspace.")
+      errorMsg("Could not find a valid execution payload target.")
       quit(1)
 
   except CatchableError as e:
-    errorMsg("Encountered structural error during binary installation: " & e.msg)
+    errorMsg("Encountered error during binary installation: " & e.msg)
     quit(1)
 
 # ----------------------------------------------------------------------------------------
@@ -374,7 +390,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
     warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
 
   of Binary:
-    installRawBinary(pkgName, downloadPath)
+    installBinary(pkgName, downloadPath)
 
   of Source:
     warnMsg("Build pipelines are not yet natively supported.")
