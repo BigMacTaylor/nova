@@ -14,7 +14,7 @@ Download from the [releases page](https://github.com/BigMacTaylor/nova/releases)
 
 ```bash
 # Download
-curl -LO https://github.com/BigMacTaylor/nova/releases/download/v0.0.8-beta.1/nova-linux-glibc-amd64.tar.gz
+curl -LO https://github.com/BigMacTaylor/nova/releases/download/v0.1.0-beta.1/nova-linux-glibc-amd64.tar.gz
 
 # Extract the binary
 tar -xzf ./nova-linux-glibc-amd64.tar.gz
