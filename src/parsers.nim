@@ -396,6 +396,7 @@ proc getSourceType*(target: string): SourceType =
     return srcGenericUrl
 
 proc getRepoName*(target: string): string =
+  debug "getRepoName, ", target
   # Edge Cases
   if not target.contains('/'):
     return ""
@@ -408,7 +409,9 @@ proc getRepoName*(target: string): string =
     "https://github.com", "http://github.com", "github.com",
     "git@github.com:", "://://github.com", "://github.com",
     "https://gitlab.com", "http://gitlab.com", "gitlab.com",
-    "git@gitlab.com:", "://://gitlab.com", "://gitlab.com"
+    "git@gitlab.com:", "://://gitlab.com", "://gitlab.com",
+    "https://codeberg.org", "http://codeberg.org", "codeberg.org",
+    "git@codeberg.org:", "://://codeberg.org", "://codeberg.org",
   ]
 
   let lowerClean = clean.toLowerAscii()

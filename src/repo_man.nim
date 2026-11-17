@@ -389,6 +389,7 @@ proc removeGitRepo(repoInput: string) =
 # ----------------------------------------------------------------------------------------
 
 proc addGitRepo(pkgMan, repoInput: string) {.async.} =
+  debug "addGitRepo", repoInput
   let repoPath = getRepoName(repoInput)
   if repoPath.len == 0 or not repoPath.contains("/"):
     errorMsg("Invalid repository format. Use 'owner/repo' or a full GitHub URL.")
