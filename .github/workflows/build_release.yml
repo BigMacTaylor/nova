@@ -85,9 +85,6 @@ jobs:
           description: "Next Generation Package Manager."
           homepage: "https://github.com/${{ github.repository }}"
           license: "MIT"
-          packagers:
-            - deb
-            - rpm
           contents:
             - src: "glibc-bin/${{ env.MY_APP }}"
               dst: "/usr/bin/${{ env.MY_APP }}"
