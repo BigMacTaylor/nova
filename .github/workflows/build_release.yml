@@ -32,11 +32,16 @@ jobs:
 
       # --- ENVIRONMENT SETUP BRANCHES ---
 
-      - name: Set up Nim (Ubuntu GLIBC)
+      - name: Set up Nim and Tools (Ubuntu GLIBC)
         if: matrix.target == 'glibc'
         uses: jiro4989/setup-nim-action@v2
         with:
           nim-version: 'stable'
+
+      - name: Install Release CLI Dependencies (Ubuntu GLIBC)
+        if: matrix.target == 'glibc'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gh file
 
       # Install Nim, static musl OpenSSL, and verification tools via apk
       - name: Set up Nim and Dependencies (Alpine MUSL)
@@ -58,8 +63,43 @@ jobs:
         if: matrix.target == 'glibc'
         run: |
           mkdir -p dist-bins/ glibc-bin/
-          nim c -d:release -d:ssl -d:openssl3 -o:glibc-bin/${{ env.MY_APP }} src/${{ env.MY_APP }}.nim
+          nim c -d:release -d:ssl -d:openssl3 --passL:"-s" -o:glibc-bin/${{ env.MY_APP }} src/${{ env.MY_APP }}.nim
           tar -czf dist-bins/${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz -C glibc-bin/ ${{ env.MY_APP }}
+
+      # --- DEB & RPM PACKAGE GENERATION WITH NFPM ---
+
+      - name: Generate Dynamic nFPM Config (GLIBC)
+        if: matrix.target == 'glibc'
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}" # Strips 'v' prefix if present
+          
+          cat <<EOF > nfpm.yaml
+          name: "${{ env.MY_APP }}"
+          arch: "amd64"
+          platform: "linux"
+          version: "${VERSION}"
+          section: "utils"
+          priority: "optional"
+          maintainer: "Mac Taylor <noreply@github.com>"
+          description: "Next Generation Package Manager."
+          homepage: "https://github.com/${{ github.repository }}"
+          license: "MIT"
+          packagers:
+            - deb
+            - rpm
+          contents:
+            - src: "glibc-bin/${{ env.MY_APP }}"
+              dst: "/usr/bin/${{ env.MY_APP }}"
+              file_info:
+                mode: 0755
+          EOF
+
+      - name: Build DEB and RPM Packages via nFPM Action
+        if: matrix.target == 'glibc'
+        uses: goreleaser/nfpm-action@v2
+        with:
+          args: package --config nfpm.yaml --target dist-bins/
 
       # Compile statically-linked musl binary
       - name: Build Nim Release Binary (MUSL)
@@ -72,6 +112,7 @@ jobs:
             --dynlibOverride:ssl \
             --dynlibOverride:crypto \
             --passL:"-static" \
+            --passL:"-s" \
             --passL:"/usr/lib/libssl.a" \
             --passL:"/usr/lib/libcrypto.a" \
             --passL:"/usr/lib/libz.a" \
@@ -89,19 +130,19 @@ jobs:
 
       # --- CHECKSUM GENERATION ---
 
-      # Compute SHA-256 for the archive produced by the matrix runner
-      - name: Generate Checksum
+      # Compute SHA-256 for all generated build targets in the matrix runner
+      - name: Generate Checksums
         run: |
           cd dist-bins/
-          sha256sum ${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz > ${{ env.MY_APP }}-linux-${{ matrix.suffix }}-amd64.tar.gz.sha256
+          for file in *.{tar.gz,deb,rpm}; do
+            [ -f "$file" ] || continue
+            sha256sum "$file" > "$file".sha256
+          done
 
       # --- ASSET UPLOAD ---
 
-      # Uploads both the tarball and its separate checksum asset.
-      # If you prefer a single collective 'checksums.txt' summary file instead, 
-      # a single coordination job would be needed. 
-      - name: Upload Archives and Checksums to Release
+      - name: Upload Archives, Packages, and Checksums to Release
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" dist-bins/*.tar.gz dist-bins/*.sha256 --clobber --repo "${{ github.repository }}"
+          gh release upload "${{ github.event.release.tag_name }}" dist-bins/* --clobber --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
