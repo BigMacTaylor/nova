@@ -93,6 +93,15 @@ jobs:
               dst: "/usr/bin/${{ env.MY_APP }}"
               file_info:
                 mode: 0755
+          deb:
+            # Compression algorithm (gzip (default), zstd, xz or none).
+            # Optionally compression level (gzip:-1 (default), gzip:1, gzip:9, zstd:1, zstd:19)
+            compression: xz
+          # Custom configuration applied only to the RPM packager.
+          rpm:
+            compression: xz
+            buildhost: fedora
+
           EOF
 
       - name: Download and Install nFPM Binary (GLIBC)
