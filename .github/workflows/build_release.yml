@@ -41,14 +41,14 @@ jobs:
       - name: Install Release CLI Dependencies (Ubuntu GLIBC)
         if: matrix.target == 'glibc'
         run: |
-          sudo apt-get update && sudo apt-get install -y gh file
+          sudo apt-get update && sudo apt-get install -y gh file tar curl
 
       # Install Nim, static musl OpenSSL, and verification tools via apk
       - name: Set up Nim and Dependencies (Alpine MUSL)
         if: matrix.target == 'musl'
         run: |
           apk update
-          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev zlib-static github-cli git file libc-utils tar coreutils
+          apk add --no-cache nim gcc musl-dev openssl-dev openssl-libs-static zlib-dev zlib-static github-cli git file libc-utils tar coreutils curl
 
       # --- CODE VERIFICATION & COMPILATION ---
 
@@ -95,11 +95,21 @@ jobs:
                 mode: 0755
           EOF
 
-      - name: Build DEB and RPM Packages via nFPM Action
+      - name: Download and Install nFPM Binary (GLIBC)
         if: matrix.target == 'glibc'
-        uses: goreleaser/nfpm-action@v2
-        with:
-          args: package --config nfpm.yaml --target dist-bins/
+        run: |
+          NFPM_VERSION="2.49.0"
+          curl -sSLO "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          mkdir -p nfpm-cli
+          tar -xzf nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz -C nfpm-cli/
+          sudo mv nfpm-cli/nfpm /usr/local/bin/
+          rm -rf nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz nfpm-cli/
+          nfpm --version
+
+      - name: Build DEB and RPM Packages via nFPM CLI
+        if: matrix.target == 'glibc'
+        run: |
+          nfpm package --config nfpm.yaml --target dist-bins/
 
       # Compile statically-linked musl binary
       - name: Build Nim Release Binary (MUSL)
