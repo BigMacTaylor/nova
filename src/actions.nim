@@ -33,14 +33,22 @@ proc parseAction(arg: string): Action =
   else: actUnknown
 
 # Actions to run before native commands
-proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
+proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string, targets: seq[string]) =
   debug "running pre exec actions"
   case action
   of actInstall:
-    installPkg(pkgMan, targetStr)
+    if targets.len > 0:
+      installPkg(pkgMan, targets)
+    else:
+      errorMsg("The 'install' command requires at least one package argument.")
+      quit(1)
 
   of actRemove:
-    removePkg(pkgMan, targetStr)
+    if targets.len > 0:
+      removePkg(pkgMan, targets)
+    else:
+      errorMsg("The 'remove' command requires at least one package argument.")
+      quit(1)
 
   of actAddRepo:
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
@@ -51,6 +59,10 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string) =
     if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
       removeGitRepo(targetStr)
       quit(0)
+
+  of actUpgrade:
+    if targets.len > 0:
+      upgradePkg(pkgMan, targets)
 
   of actListRepos:
     styledEcho(fgWhite, styleBright, " System Repositories:", resetStyle)

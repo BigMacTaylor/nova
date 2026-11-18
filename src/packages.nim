@@ -314,7 +314,7 @@ proc initDesktopFile(pkgName: string, appPath: string) =
       except CatchableError: discard
 
 # ----------------------------------------------------------------------------------------
-#                                    Install Package
+#                                    Install Git Package
 # ----------------------------------------------------------------------------------------
 
 proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
@@ -393,146 +393,236 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   of Source:
     warnMsg("Build pipelines are not yet natively supported.")
 
-proc installPkg(pkgMan: string, targetStr: string) =
-  debug "installPkg"
-  let repoList = loadOrCreateRepoList(repoFile)
+# ----------------------------------------------------------------------------------------
+#                                    Install Package
+# ----------------------------------------------------------------------------------------
 
-  # Check if target is already in the manifest
-  let foundIndex = repoList.findInManifest(targetStr)
-  if foundIndex != -1:
-    debug "Found package \'", targetStr, "\' in manifest."
+proc installPkg(pkgMan: string, targets: seq[string]) =
+  ## Installs from URLs or packages in manifest, sends remaining to native package manager.
+  debug "installPkg: Processing targets " & $targets
+  
+  var nativeTargets: seq[string] = @[]
+  let repoList = if fileExists(repoFile): loadOrCreateRepoList(repoFile) else: newJArray()
+
+  for target in targets:
+    let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
+
+    # Check if target is already in the manifest
+    if foundIndex != -1:
+      debug "Found package '" & target & "' in manifest."
+      let entry = repoList[foundIndex]
+      let pkgName = entry.getOrDefault("pkg_name").getStr("")
+      let manifestVer = entry.getOrDefault("version").getStr("")
+      let downloadUrl = entry.getOrDefault("download_url").getStr("")
+      let pkgType =
+        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+        except ValueError: Binary
+
+      if pkgName.len == 0 or downloadUrl.len == 0:
+        debug "Skipping incomplete or malformed entry in manifest registry."
+        continue
+
+      # Get currently installed version
+      let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+
+      # Check if it's missing or out of date
+      let isMissing = installedVer.len == 0
+      let isStale = (manifestVer.len > 0) and (compareVersionStrings(manifestVer, installedVer) == 1)
+
+      if isMissing or isStale:
+        if isMissing:
+          debug "Package '" & pkgName & "' is not present on the host system. Installing..."
+        else:
+          infoMsg("Upgrade detected for '" & pkgName & "': Local (" & installedVer & ") -> Tracked (" & manifestVer & ")")
+
+        waitFor installGitPkg(pkgMan, entry)
+      else:
+        styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
+        styledWrite(stdout, " is already the newest version ")
+        styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+
+    # If target's not in manifest and it's a Git repo, add repo then install pkg
+    elif getSourceType(target) in {srcGithubRepo, srcGitlabRepo}:
+      infoMsg("Interpreted input target '" & target & "' as source reference URL.")
+      waitFor addGitRepo(pkgMan, target)
+
+      # Reload manifest to capture the new addition
+      let repoName = getRepoName(target).toLowerAscii()
+      let updatedList = loadOrCreateRepoList(repoFile)
+
+      for entry in updatedList:
+        if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
+          waitFor installGitPkg(pkgMan, entry)
+          break
+
+    # Unmanaged native packages get sent to native package manager
+    else:
+      debug "Package '" & target & "' not found in manifest or URLs. Sending to native package manager..."
+      nativeTargets.add(target)
+
+  # Batch remaining native targets into one native package manager execution
+  if nativeTargets.len > 0:
+    let nativeTargetStr = nativeTargets.join(" ")
+    infoMsg("Passing native system installations down to system package matrix: " & nativeTargetStr)
+    let exitCode = runNativeCommand(pkgMan, actInstall, nativeTargetStr)
+    quit(exitCode)
+  else:
+    quit(0)
+
+# ----------------------------------------------------------------------------------------
+#                                    Upgrade Package
+# ----------------------------------------------------------------------------------------
+
+proc upgradePkg(pkgMan: string, targets: seq[string]) =
+  ## Checks Nova's manifest first; if missing, it lets the execution pass to the system.
+  debug "upgradePkg: Processing targets " & $targets
+
+  var nativeTargets: seq[string] = @[]
+  let repoList = if fileExists(repoFile): loadOrCreateRepoList(repoFile) else: newJArray()
+
+  for target in targets:
+    let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
+
+    if foundIndex == -1:
+      debug "Package '" & target & "' not managed by Nova. Staging for native manager..."
+      nativeTargets.add(target)
+      continue
+
+    # Process Nova targeted package upgrade
+    infoMsg("Target package '" & target & "' managed by Nova. Initiating manifest upgrade...")
     let entry = repoList[foundIndex]
     let pkgName = entry.getOrDefault("pkg_name").getStr("")
-    let manifestVer = entry.getOrDefault("version").getStr("")
-    let downloadUrl = entry.getOrDefault("download_url").getStr("")
+    #let oldVersion = entry.getOrDefault("version").getStr("")
+    let repoPath = entry.getOrDefault("repo").getStr("")
+    let prerelease = entry.getOrDefault("prerelease").getBool(false)
+    let preferMusl = entry.getOrDefault("prefer_musl").getBool(false)
     let pkgType =
       try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
       except ValueError: Binary
 
-    if pkgName.len == 0 or downloadUrl.len == 0:
-      debug "Skipping incomplete or malformed entry in manifest."
-      return
-
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
 
-    # Check if it's missing or out of date
-    let isMissing = installedVer.len == 0
-    let isStale = (manifestVer.len > 0) and (compareVersionStrings(manifestVer, installedVer) == 1)
+    let repoData = waitFor getRepoData(pkgMan, repoPath, prerelease, preferMusl)
+    
+    if repoData.version.len == 0:
+      warnMsg("Could not fetch remote update info for: ", repoPath)
+      continue
 
-    if isMissing or isStale:
-      if isMissing:
-        debug "Package '", pkgName, "' is not present on the host system. Installing..."
+    # Check if it's missing or out of date
+    if installedVer.len == 0 or compareVersionStrings(repoData.version, installedVer) == 1:
+      if installedVer.len == 0:
+        infoMsg("Package '" & pkgName & "' is missing from the system. Re-installing newest version (" & repoData.version & ")...")
       else:
-        infoMsg(
-          "Upgrade detected for '" & pkgName & "': Local (" & installedVer &
-            ") -> Tracked (" & manifestVer & ")"
-        )
+        infoMsg("Upgrade discovered for '" & pkgName & "': Local (" & installedVer & ") -> Remote (" & repoData.version & ")")
+
+      # Commit changes to manifest
+      entry["version"] = newJString(repoData.version)
+      entry["download_url"] = newJString(repoData.downloadUrl)
+      
+      try:
+        writeFile(repoFile, repoList.pretty())
+      except IOError:
+        errorMsg("Failed to write changes to manifest.")
+        quit(1)
 
       # Install Package
       waitFor installGitPkg(pkgMan, entry)
-      quit(0)
-
+      successMsg("Successfully upgraded Git package '", pkgName, "'!")
     else:
-      styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
-      styledWrite(stdout, " is already the newest version ")
-      styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+      successMsg("Package '", pkgName, "' is already up to date at version ", installedVer)
 
-      styledEcho(fgWhite, styleBright, "Nothing for Nova to do.", resetStyle)
-      quit(0)
-
-  # If target's not in manifest and it's a Git repo, add repo then install pkg
-  elif getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
-    infoMsg("Interpreted input as source URL.")
-    waitFor addGitRepo(pkgMan, targetStr)
-
-    # Reload to capture the new addition
-    let repoName = getRepoName(targetStr).toLowerAscii()
-    let updatedList = loadOrCreateRepoList(repoFile)
-
-    for entry in updatedList:
-      if entry.hasKey("repo") and entry["repo"].getStr().toLowerAscii() == repoName:
-        # Install Package
-        waitFor installGitPkg(pkgMan, entry)
-        quit(0)
+  # If there are system packages left over, pass them to the native command routine instead of quitting
+  if nativeTargets.len > 0:
+    let nativeTargetStr = nativeTargets.join(" ")
+    infoMsg("Passing native system upgrades to backend: " & nativeTargetStr)
+    let exitCode = runNativeCommand(pkgMan, actUpgrade, nativeTargetStr)
+    quit(exitCode)
+  else:
+    quit(0)
 
 # ----------------------------------------------------------------------------------------
 #                                    Remove Package
 # ----------------------------------------------------------------------------------------
 
-proc removePkg(pkgMan: string, targetStr: string) =
-  debug "removePkg"
-  let repoList = loadOrCreateRepoList(repoFile)
+proc removePkg(pkgMan: string, targets: seq[string]) =
+  ## Removes standalone binaries/AppImages and batches remaining system packages.
+  debug "removePkg: Processing targets " & $targets
+  
+  var nativeTargets: seq[string] = @[]
+  let repoList = if fileExists(repoFile): loadOrCreateRepoList(repoFile) else: newJArray()
 
-  # Check if target is already in the manifest
-  let foundIndex = repoList.findInManifest(targetStr)
-  if foundIndex == -1:
-    debug "Package '", targetStr, "' not found in manifest."
-    return
+  for target in targets:
+    # Check if target is already in the manifest
+    let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
 
-  debug "Found package \'", targetStr, "\' in manifest."
-  let entry = repoList[foundIndex]
-  let pkgName = entry.getOrDefault("pkg_name").getStr("")
-  let pkgType =
-    try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
-    except ValueError: Binary
+    if foundIndex == -1:
+      debug "Package '" & target & "' not found in manifest. Staging for native manager removal..."
+      nativeTargets.add(target)
+      continue
 
-  # Get currently installed version
-  let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-  if installedVer.len == 0:
-    debug "Package '", pkgName, "' is not installed."
-    return
+    debug "Found package \'" & target & "\' in manifest."
+    let entry = repoList[foundIndex]
+    let pkgName = entry.getOrDefault("pkg_name").getStr("")
+    let pkgType =
+      try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+      except ValueError: Binary
 
-  # Remove Packages by Type
-  case pkgType
-  of Deb, Rpm, Pacman:
-    infoMsg("Uninstalling native package...")
-    let exitCode = runNativeCommand(pkgMan, actRemove, pkgName)
-    if exitCode == 0:
-      successMsg("Successfully uninstalled package \'", pkgName, "\'")
-      quit(0)
-    else:
-      errorMsg("Failed to uninstall package \'", pkgName, "\'")
-      quit(1)
+    # Get currently installed version
+    let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+    if installedVer.len == 0:
+      debug "Package '" & pkgName & "' is tracked in manifest but not detected as installed. Skipping local deletion."
+      continue
 
-  of AppImage:
-    infoMsg("Uninstalling AppImage binary...")
-    let localBinDir = os.getHomeDir() / ".local" / "bin"
-    let pkgPath = localBinDir / pkgName
+    # Remove Packages by Type
+    case pkgType
+    of Deb, Rpm, Pacman:
+      debug "Tracked package '" & pkgName & "' is a native system asset. Offloading to atomic system execution list..."
+      nativeTargets.add(pkgName)
 
-    if fileExists(pkgPath):
-      try:
-        removeFile(pkgPath)
-        debug "Successfully removed AppImage binary: ", pkgPath
-      except OSError:
-        errorMsg("Failed to delete AppImage binary: ", pkgPath)
-        quit(1)
-    else:
-      warnMsg("AppImage binary did not exist at: ", pkgPath)
+    of AppImage:
+      infoMsg("Uninstalling AppImage binary \'" & pkgName & "\'...")
+      let localBinDir = os.getHomeDir() / ".local" / "bin"
+      let pkgPath = localBinDir / pkgName
 
-    removeDesktopFile(pkgName)
-    successMsg("Successfully removed \'", pkgName, "\' from the system.")
+      if fileExists(pkgPath):
+        try:
+          removeFile(pkgPath)
+          debug "Successfully removed AppImage binary: ", pkgPath
+        except OSError:
+          errorMsg("Failed to delete AppImage binary: ", pkgPath)
+          quit(1)
+      else:
+        warnMsg("AppImage binary did not exist at: ", pkgPath)
+
+      removeDesktopFile(pkgName)
+      successMsg("Successfully removed \'", pkgName, "\' from the system.")
+
+    of Binary:
+      infoMsg("Uninstalling standalone native binary...")
+      let localBinDir = os.getHomeDir() / ".local" / "bin"
+      let pkgPath = localBinDir / pkgName
+
+      if fileExists(pkgPath):
+        try:
+          removeFile(pkgPath)
+          successMsg("Successfully uninstalled binary \'", pkgName, "\'")
+        except OSError:
+          errorMsg("Failed to delete binary at: ", pkgPath)
+          quit(1)
+      else:
+        warnMsg("Binary target did not exist at: ", pkgPath)
+
+    of Flatpak, Snap:
+      warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported for targeted uninstallation routines.")
+    of Source:
+      warnMsg("Source compilation build uninstallation trees are not yet natively supported.")
+
+  # Batch remaining native targets into one native package manager execution
+  if nativeTargets.len > 0:
+    let nativeTargetStr = nativeTargets.join(" ")
+    infoMsg("Passing native system removals down to system package matrix: " & nativeTargetStr)
+    let exitCode = runNativeCommand(pkgMan, actRemove, nativeTargetStr)
+    quit(exitCode)
+  else:
     quit(0)
-
-  of Flatpak, Snap:
-    warnMsg("Global framework containers (Flatpak/Snap) are not yet natively supported.")
-
-  of Binary:
-    infoMsg("Uninstalling standalone native binary...")
-    let localBinDir = os.getHomeDir() / ".local" / "bin"
-    let pkgPath = localBinDir / pkgName
-
-    if fileExists(pkgPath):
-      try:
-        removeFile(pkgPath)
-        successMsg("Successfully uninstalled binary \'", pkgName, "\'")
-        quit(0)
-      except OSError:
-        errorMsg("Failed to delete binary path: ", pkgPath)
-        quit(1)
-    else:
-      warnMsg("Binary target did not exist at: ", pkgPath)
-      quit(0)
-
-  of Source:
-    warnMsg("Build pipelines are not yet natively supported.")

@@ -25,7 +25,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "apt remove -y " & target
     of actAutoremove:    su & "apt autoremove -y"
     of actRefresh:       su & "apt update"
-    of actUpgrade:       su & "apt upgrade -y"
+    of actUpgrade:       (if target.len > 0: su & "apt install --only-upgrade -y " & target else: su & "apt upgrade -y")
     of actInfo:          "apt show " & target
     of actStatus:        "dpkg-query -W -f='${Status}|${Version}|${Installed-Size} KB\\n' " & target &   " 2>/dev/null"
     of actAddRepo:       su & "add-apt-repository -y " & target
@@ -44,7 +44,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "nala remove -y " & target
     of actAutoremove:    su & "nala autoremove -y"
     of actRefresh:       su & "nala update"
-    of actUpgrade:       su & "nala upgrade -y"
+    of actUpgrade:       (if target.len > 0: su & "apt install --only-upgrade -y " & target else: su & "nala upgrade -y")
     of actInfo:          "nala show " & target
     of actStatus:        "dpkg-query -W -f='${Status}|${Version}|${Installed-Size} KB\\n' " & target &   " 2>/dev/null"
     of actAddRepo:       su & "add-apt-repository -y " & target
@@ -63,7 +63,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "dnf remove -y " & target
     of actAutoremove:    su & "dnf autoremove -y"
     of actRefresh:       su & "dnf makecache"
-    of actUpgrade:       su & "dnf upgrade -y"
+    of actUpgrade:       (if target.len > 0: su & "dnf upgrade -y " & target else: su & "dnf upgrade -y")
     of actInfo:          "dnf info " & target
     of actStatus:        "rpm -q --queryformat 'installed|%{VERSION}|%{SIZE}\\n' " & target & " 2>/dev/null"
     of actAddRepo:       su & "dnf config-manager addrepo --from-repofile=" & target
@@ -82,7 +82,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "pacman -R --noconfirm " & target
     of actAutoremove:    su & "bash -c 'orphans=$(pacman -Qdtq); [ -n \"$orphans\" ] && pacman -Rns --noconfirm $orphans || echo \"No orphans found.\"'"
     of actRefresh:       su & "pacman -Sy"
-    of actUpgrade:       su & "pacman -Syu --noconfirm"
+    of actUpgrade:       (if target.len > 0: su & "pacman -S --noconfirm " & target else: su & "pacman -Syu --noconfirm")
     of actInfo:          "pacman -Si " & target
     of actStatus:        "pacman -Qi " & target & " 2>/dev/null | grep -E 'Name|Version|Installed Size' | awk -F: '{print $2}' | sed 's/^[ \\t]*//' | tr '\\n' '|'"
     of actAddRepo:       "echo 'Edit /etc/pacman.conf manually to append repositories.'"
@@ -101,7 +101,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "zypper --non-interactive rm " & target
     of actAutoremove:    su & "zypper rm -u"
     of actRefresh:       su & "zypper ref"
-    of actUpgrade:       su & "zypper up -y"
+    of actUpgrade:       (if target.len > 0: su & "zypper --non-interactive up " & target else: su & "zypper up -y")
     of actInfo:          "zypper info " & target
     of actStatus:        "zypper info " & target & " 2>/dev/null | grep -E 'Installed|Version|Installed Size' | awk -F: '{print $2}' | sed 's/^[ \\t]*//' | tr '\\n' '|'"
     of actAddRepo:       su & "zypper ar " & target
@@ -120,7 +120,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "apk del " & target
     of actAutoremove:    "echo 'Alpine manages dependencies automatically upon removal.'"
     of actRefresh:       su & "apk update"
-    of actUpgrade:       su & "apk upgrade"
+    of actUpgrade:       (if target.len > 0: su & "apk add --upgrade " & target else: su & "apk upgrade")
     of actInfo:          "apk info " & target
     of actStatus:        "apk info -s " & target & " 2>/dev/null | tr '\\n' '|'; apk info -v " & target & " 2>/dev/null"
     of actAddRepo:       su & "bash -c \"echo '" & target & "' >> /etc/apk/repositories\""
@@ -139,7 +139,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "xbps-remove -y " & target
     of actAutoremove:    su & "xbps-remove -Oy"
     of actRefresh:       su & "xbps-install -S"
-    of actUpgrade:       su & "xbps-install -Su"
+    of actUpgrade:       (if target.len > 0: su & "xbps-install -Uy " & target else: su & "xbps-install -Su")
     of actInfo:          "xbps-query -Rs " & target
     of actStatus:        "xbps-query -W " & target & " 2>/dev/null"
     of actAddRepo:       su & "xbps-install -y " & target
@@ -158,7 +158,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        su & "emerge --ask=n --unmerge " & target
     of actAutoremove:    su & "emerge --ask=n --depclean"
     of actRefresh:       su & "emaint sync --repo gentoo"
-    of actUpgrade:       su & "emerge --update --deep --with-bdeps=y @world"
+    of actUpgrade:       (if target.len > 0: su & "emerge --update --ask=n " & target else: su & "emerge --update --deep --with-bdeps=y @world")
     of actInfo:          "emerge --searchdesc " & target
     of actStatus:        "qlist -Iv " & target & " 2>/dev/null; qsize -m " & target & " 2>/dev/null"
     of actAddRepo:       su & "eselect repository enable " & target
@@ -177,7 +177,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        "brew uninstall " & target
     of actAutoremove:    "brew autoremove"
     of actRefresh:       "brew update"
-    of actUpgrade:       "brew upgrade"
+    of actUpgrade:       (if target.len > 0: "brew upgrade " & target else: "brew upgrade")
     of actInfo:          "brew info " & target
     of actStatus:        "brew info --json=v2 " & target & " 2>/dev/null"
     of actAddRepo:       "brew tap " & target
@@ -196,7 +196,7 @@ proc getNativeCommand(pkgMan: string, action: Action, target: string = ""): stri
     of actRemove:        "rad -c remove " & target
     of actAutoremove:    "rad -c distclean"
     of actRefresh:       "rad -c sync"
-    of actUpgrade:       "rad -c upgrade"
+    of actUpgrade:       (if target.len > 0: "rad -c install " & target else: "rad -c upgrade")
     of actInfo:          "rad -c print " & target
     of actStatus:        "echo 'Not yet supported.'"
     of actAddRepo:       "rad -c append " & target

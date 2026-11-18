@@ -145,7 +145,7 @@ proc main() =
     quit(1)
 
   # Run actions before native commands
-  runPreExecutionHooks(pkgMan, action, targetStr)
+  runPreExecutionHooks(pkgMan, action, targetStr, targets)
 
   # Execute standard native commands
   let exitCode = runNativeCommand(pkgMan, action, targetStr)
