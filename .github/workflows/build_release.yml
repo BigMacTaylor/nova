@@ -109,7 +109,8 @@ jobs:
       - name: Build DEB and RPM Packages via nFPM CLI
         if: matrix.target == 'glibc'
         run: |
-          nfpm package --config nfpm.yaml --target dist-bins/
+          nfpm package --config nfpm.yaml --target dist-bins/ --packager deb
+          nfpm package --config nfpm.yaml --target dist-bins/ --packager rpm
 
       # Compile statically-linked musl binary
       - name: Build Nim Release Binary (MUSL)
