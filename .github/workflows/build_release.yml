@@ -82,14 +82,23 @@ jobs:
           section: "utils"
           priority: "optional"
           maintainer: "Mac Taylor <noreply@github.com>"
-          description: "Next Generation Package Manager."
           homepage: "https://github.com/${{ github.repository }}"
           license: "MIT"
+          description: |-
+            Nova: Next Generation Package Manager
+            A distro-agnostic package manager that installs packages directly from GitHub
           contents:
             - src: "glibc-bin/${{ env.MY_APP }}"
               dst: "/usr/bin/${{ env.MY_APP }}"
               file_info:
                 mode: 0755
+          overrides:
+            deb:
+              depends:
+                - libc6 (>= 2.35)
+            rpm:
+              depends:
+                - libc.so.6(GLIBC_2.35)(64bit)
           deb:
             # Compression algorithm (gzip (default), zstd, xz or none).
             # Optionally compression level (gzip:-1 (default), gzip:1, gzip:9, zstd:1, zstd:19)

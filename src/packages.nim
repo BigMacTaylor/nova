@@ -463,7 +463,7 @@ proc installPkg(pkgMan: string, targets: seq[string]) =
   # Batch remaining native targets into one native package manager execution
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
-    infoMsg("Passing native system installations down to system package matrix: " & nativeTargetStr)
+    infoMsg("Passing unmanifested packages to system package manager: " & nativeTargetStr)
     let exitCode = runNativeCommand(pkgMan, actInstall, nativeTargetStr)
     quit(exitCode)
   else:
@@ -535,7 +535,7 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
   # If there are system packages left over, pass them to the native command routine instead of quitting
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
-    infoMsg("Passing native system upgrades to backend: " & nativeTargetStr)
+    infoMsg("Passing unmanifested packages to system package manager: " & nativeTargetStr)
     let exitCode = runNativeCommand(pkgMan, actUpgrade, nativeTargetStr)
     quit(exitCode)
   else:
@@ -621,7 +621,7 @@ proc removePkg(pkgMan: string, targets: seq[string]) =
   # Batch remaining native targets into one native package manager execution
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
-    infoMsg("Passing native system removals down to system package matrix: " & nativeTargetStr)
+    infoMsg("Passing unmanifested packages to system package manager: " & nativeTargetStr)
     let exitCode = runNativeCommand(pkgMan, actRemove, nativeTargetStr)
     quit(exitCode)
   else:
