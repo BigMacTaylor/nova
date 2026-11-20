@@ -78,7 +78,7 @@ proc main() =
   var p = initOptParser(
     commandLineParams(), 
     shortNoVal = {'h', 'v'}, 
-    longNoVal = @["help", "version", "prefer-musl", "include-prerelease", "no-verify"]
+    longNoVal = @["help", "version", "musl", "prerelease", "no-verify"]
   )
 
   var firstAction = ""
@@ -101,9 +101,9 @@ proc main() =
       of "v", "version":
         echo "nova version: " & version
         quit(0)
-      of "prefer-musl":
+      of "musl":
         preferMuslFlag = true
-      of "include-prerelease":
+      of "prerelease":
         prereleaseFlag = true
       of "no-verify":
         disableSslFlag = true
@@ -128,6 +128,7 @@ proc main() =
     quit(1)
 
   var targetStr = targets.join(" ")
+
   if action in {
     actAddRepo, actSearch, actInstall, actReinstall, actRemove, actRemoveRepo, actInfo,
     actStatus, actListVersions,

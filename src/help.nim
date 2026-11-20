@@ -57,8 +57,8 @@ Options:
   -v, --version         Show version number and exit
 
 Options(testing):
-  --prefer-musl         Prefer musl over glibc binaires
-  --include-prerelease  Allow beta, rc, and nightly versions over stable
+  --musl                Prefer musl over glibc binaires
+  --prerelease          Allow beta, rc, and nightly versions over stable
   --no-verify           Disable SSL/TLS verification
 
 Package Management Commands:
