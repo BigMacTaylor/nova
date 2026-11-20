@@ -9,7 +9,7 @@ const version = "0.1.1"
 
 import std/[json, os, posix, osproc, strutils, asyncdispatch]
 import std/[sequtils, httpclient, terminal, unicode, parseopt]
-import std/net
+import std/[streams, net]
 
 type Action* = enum
   actSearch

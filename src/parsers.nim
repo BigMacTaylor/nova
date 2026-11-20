@@ -199,11 +199,9 @@ proc getNativeVersion(pkgMan, pkgName: string): string =
 
   return ""
 
-proc getMountAppImageVer(appImagePath: string): string =
+proc getMountedAppImageVer(appImagePath: string): string =
   ## Extracts the version string from an AppImage by mounting it via FUSE,
   ## reading its .desktop file metadata, and cleanly unmounting it.
-  if not fileExists(appImagePath):
-    return ""
 
   # Start the AppImage mount process in the background
   # poStdErrToStdOut combines streams so we can catch early initialization errors
@@ -226,7 +224,7 @@ proc getMountAppImageVer(appImagePath: string): string =
       try:
         mountDir = outFile.readLine().strip()
       finally:
-        close(outFile) # Unconditionally closes the handle even if readLine fails
+        close(outFile)
 
     # Verify we got a valid directory path and wait for FUSE to sync
     if mountDir.len > 0:
@@ -267,95 +265,185 @@ proc getMountAppImageVer(appImagePath: string): string =
   return result
 
 proc getAppImageVersion(appName: string): string =
-  ## Scrapes the static binary declaration of an AppImage payload 
-  ## to extract its internal version signature safely.
+  ## Searches the AppImage metadata for version string
   debug "getAppImageVersion"
   let appsDir = os.getHomeDir() / ".local" / "bin"
   let appImagePath = appsDir / appName
 
-  if not fileExists(appImagePath):
-    debug "AppImage file does not exist"
-    return ""
+  var fs = newFileStream(appImagePath, fmRead)
+  if fs != nil:
+    try:
+      # Read the first 16 bytes to inspect the AppImage Magic Number
+      let header = fs.readStr(16)
+      
+      # AppImage Specification check: Type 2 explicitly embeds 'A', 'I', 0x02 at byte index 8
+      let isType2 = header.len >= 11 and header[8] == 'A' and header[9] == 'I' and header[10] == '\x02'
+      
+      if not isType2:
+        debug "Legacy Type 1 AppImage detected. Skipping execution-based extraction pipelines safely."
+        # Legacy Type 1 configs generally embed version context into their external filenames 
+        # (e.g. app-1.0.0.AppImage). Fall back to parsing the file name string directly.
+        fs.close()
+        return normalizeVersion(appName)
 
-  # Uses strings to extract the exact match without mounting/running code
-  let cmd = "strings " & quoteShell(appImagePath) & " | grep -m 1 '^X-AppImage-Version='"
-  let (output, exitCode) = execCmdEx(cmd)
-  
-  if exitCode == 0 and '=' in output:
-    return output.split('=', 1)[1].strip()
+      # Reset stream head position back to start
+      fs.setPosition(0)
 
-  return getMountAppImageVer(appImagePath)
+      # AppImage embedding rules put metadata definitions in the first 32KB block.
+      const scanLimit = 32768
+
+      # Scan the memory buffer for the metadata sequence
+      let buffer = fs.readStr(scanLimit)
+      let pattern = "X-AppImage-Version="
+      let matchPos = buffer.find(pattern)
+      
+      if matchPos != -1:
+        # Extract the version payload terminating at the next control character or newline
+        var val = ""
+        var idx = matchPos + pattern.len
+        while idx < buffer.len:
+          let c = buffer[idx]
+          if c in {'\0', '\n', '\r'}: break
+          val.add(c)
+          inc(idx)
+        result = val.strip()
+
+    except CatchableError:
+      discard
+    finally:
+      if fs != nil: fs.close()
+
+  # Fall back to process mounting if structural parsing failed
+  if result.len == 0:
+    debug "Static header extraction failed. Falling back to mounting AppImage..."
+    return getMountedAppImageVer(appImagePath)
+
+  return result
+
+proc checkBinaryFlag(binaryPath, flag: string, timeoutMs: int = 500): (string, bool) =
+  ## Spawns a sandboxed subprocess with a strict timeout.
+  var process: Process = nil
+  try:
+    # Spawn the process without an attached stdin channel to prevent interactive blocks
+    process = startProcess(
+      command = binaryPath,
+      args = [flag],
+      options = {poUsePath, poStdErrToStdOut}
+    )
+    
+    if process == nil: return ("", false)
+
+    # Time Firewall: Track execution loop using exponential backoff up to the timeout ceiling
+    var elapsed = 0
+    var delay = 2
+    var exitCode = -1
+    
+    while elapsed < timeoutMs:
+      if not process.running():
+        exitCode = process.peekExitCode()
+        break
+      
+      sleep(delay)
+      elapsed += delay
+      delay = min(32, delay shl 1) # Cap delay stepping to preserve quick loops
+
+    # If the process is still running after hitting the timeout ceiling, destroy it instantly
+    if process.running():
+      debug "Process timeout exceeded for flag '" & flag & "'. Terminating hang hazard safely."
+      process.terminate()
+      discard process.waitForExit(timeout = 50)
+      return ("", false)
+
+    # If it finished but exited with a failure code, invalidate this flag lookahead pass
+    if exitCode != 0:
+      return ("", false)
+
+    # Safely stream out the captured layout payload
+    var stream = process.outputStream()
+    if stream != nil:
+      let output = stream.readAll().strip()
+      if output.len > 0:
+        return (output, true)
+
+  except CatchableError as e:
+    debug "Exception caught during binary lookup: " & e.msg
+  finally:
+    if process != nil:
+      process.close()
+
+  return ("", false)
 
 proc getBinaryVersion(pkgName: string): string =
-  ## Tries to execute the localized binary with '--version', '-v', or 'version'
+  ## Tries to execute the local binary with '--version', '-v', or 'version'
   debug "getBinaryVersion"
   let binaryPath = os.getHomeDir() / ".local" / "bin" / pkgName
-  if not fileExists(binaryPath): 
-    return ""
 
-  # Helper closure to execute a specific flag and attempt to parse the version
-  let checkFlag = proc(flag: string): (string, bool) =
-    let (output, exitCode) = execCmdEx(quoteShell(binaryPath) & " " & flag)
-    if exitCode == 0 and output.strip().len > 0:
-      let cleanOutput = output.strip()
+  const flags = ["--version", "-v", "version"]
 
-      # Parse lines to find common version format variants
-      for line in cleanOutput.splitLines():
-        let lowerLine = line.toLowerAscii()
-        var pos = lowerLine.find("version:")
-        var offset = "version=".len
-        
-        # Fallback to checking for "version=" if "version:" is missing
-        if pos == -1:
-          pos = lowerLine.find("version=")
-          offset = "version:".len
+  for flag in flags:
+    let (cleanOutput, success) = checkBinaryFlag(binaryPath, flag)
+    if not success: continue
 
-        if pos != -1:
-          # Slice from right after "version:" to the end of that specific line
-          let startIdx = pos + offset
-          var content = line[startIdx .. ^1].strip()
+    # Parse lines to find common version strings
+    for line in cleanOutput.splitLines():
+      let lowerLine = line.toLowerAscii()
+      var pos = lowerLine.find("version:")
+      var offset = "version:".len
 
-          # If the value is comma-separated (like lazygit's format), truncate at the comma
-          let commaPos = content.find(',')
-          if commaPos != -1:
-            content = content[0 ..< commaPos].strip()
-            
-          if content.len > 0:
-            return (content, true)
+      # Fallback to checking for "version=" if "version:" is missing
+      if pos == -1:
+        pos = lowerLine.find("version=")
+        offset = "version=".len
 
-      # Generic fallback: return the first line if no "version" prefix was found
-      let lines = cleanOutput.splitLines()
-      if lines.len > 0 and lines[0].strip().len > 0:
-        return (lines[0].strip(), true)
-        
-    return ("", false)
+      if pos != -1:
+        # Slice from right after "version:" to the end of that specific line
+        let startIdx = pos + offset
+        var content = line[startIdx .. ^1].strip()
 
-  # Try running with --version
-  let (verLong, successLong) = checkFlag("--version")
-  if successLong: return verLong
+        # If the value is comma-separated (like lazygit's format), truncate at the comma
+        let commaPos = content.find(',')
+        if commaPos != -1:
+          content = content[0 ..< commaPos].strip()
+          
+        if content.len > 0:
+          return content
 
-  # Try running with -v
-  let (verShort, successShort) = checkFlag("-v")
-  if successShort: return verShort
+    # Generic fallback: return the first line if no "version" prefix was found
+    let lines = cleanOutput.splitLines()
+    if lines.len > 0 and lines[0].strip().len > 0:
+      return lines[0].strip()
 
-  # Try running with version (e.g., Go subcommands or CLI tools)
-  let (verCmd, successCmd) = checkFlag("version")
-  if successCmd: return verCmd
-
-  # Fallback string if all flags fail
-  return "1.0.0" 
+  # Fallback string if all flags fail or time out
+  return ""
 
 proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
   debug "getInstalledVersion"
   case pkgType
   of Deb, Rpm, Pacman:
     return normalizeVersion(getNativeVersion(pkgMan, pkgName))
-  of AppImage:
-    return normalizeVersion(getAppImageVersion(pkgName))
-  of Binary:
-    return normalizeVersion(getBinaryVersion(pkgName))
+    
+  of AppImage, Binary:
+    let localBinDir = os.getHomeDir() / ".local" / "bin"
+    let binaryPath = localBinDir / pkgName
+
+    if not fileExists(binaryPath):
+      debug "file does not exist at: ", binaryPath
+      return ""
+
+    var parsedVer = ""
+    if pkgType == AppImage:
+      parsedVer = normalizeVersion(getAppImageVersion(pkgName))
+    else:
+      parsedVer = normalizeVersion(getBinaryVersion(pkgName))
+      
+    # If the file exists but failed to get version, return "none"
+    if parsedVer.len == 0:
+      return "none"
+    else:
+      return parsedVer
+
   else:
-    debug "no installed version found"
+    debug "unsupported package type: ", pkgType
     return ""
 
 proc loadOrCreateRepoList(fileName: string): JsonNode =

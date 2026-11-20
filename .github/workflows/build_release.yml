@@ -85,7 +85,7 @@ jobs:
           homepage: "https://github.com/${{ github.repository }}"
           license: "MIT"
           description: |-
-            Nova: Next Generation Package Manager
+            Next Generation Package Manager
             A distro-agnostic package manager that installs packages directly from GitHub
           contents:
             - src: "glibc-bin/${{ env.MY_APP }}"
