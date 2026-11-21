@@ -478,8 +478,8 @@ proc installPkg(pkgMan: string, targets: seq[string]) =
 # ----------------------------------------------------------------------------------------
 
 proc upgradePkg(pkgMan: string, targets: seq[string]) =
-  ## Checks Nova's manifest first; if missing, it lets the execution pass to the system.
-  debug "upgradePkg: Processing targets " & $targets
+  ## Upgrades packages in manifest or from URL, sends remaining to native package manager.
+  debug "upgradePkg: Processing targets ", $targets
 
   var nativeTargets: seq[string] = @[]
   let repoList = if fileExists(repoFile): loadOrCreateRepoList(repoFile) else: newJArray()
@@ -488,12 +488,12 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
     let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
 
     if foundIndex == -1:
-      debug "Package '" & target & "' not managed by Nova. Staging for native manager..."
+      debug "Package \'", target, "\' not managed by Nova. Staging for native manager..."
       nativeTargets.add(target)
       continue
 
     # Process Nova targeted package upgrade
-    infoMsg("Target package '" & target & "' managed by Nova. Initiating manifest upgrade...")
+    infoMsg("Target package \'", target, "\' managed by Nova. Initiating manifest upgrade...")
     let entry = repoList[foundIndex]
     let pkgName = entry.getOrDefault("pkg_name").getStr("")
     let repoPath = entry.getOrDefault("repo").getStr("")
@@ -520,9 +520,9 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
     # Check if it's missing or out of date
     if installedVer.len == 0 or compareVersionStrings(repoData.version, installedVer) == 1:
       if installedVer.len == 0:
-        infoMsg("Package '" & pkgName & "' is missing from the system. Re-installing newest version (" & repoData.version & ")...")
+        infoMsg("Package '", pkgName, "' is missing from the system. Re-installing newest version (", repoData.version, ")...")
       else:
-        infoMsg("Upgrade discovered for '" & pkgName & "': Local (" & installedVer & ") -> Remote (" & repoData.version & ")")
+        infoMsg("Upgrade discovered for '", pkgName, "': Local (", installedVer, ") -> Remote (", repoData.version, ")")
 
       # Commit changes to manifest
       entry["version"] = newJString(repoData.version)
@@ -543,7 +543,7 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
   # If there are system packages left over, pass them to the native command routine instead of quitting
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
-    infoMsg("Passing unmanifested packages to system package manager: " & nativeTargetStr)
+    infoMsg("Passing unmanifested packages to system package manager: ", nativeTargetStr)
     let exitCode = runNativeCommand(pkgMan, actUpgrade, nativeTargetStr)
     quit(exitCode)
   else:
@@ -555,7 +555,7 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
 
 proc removePkg(pkgMan: string, targets: seq[string]) =
   ## Removes standalone binaries/AppImages and batches remaining system packages.
-  debug "removePkg: Processing targets " & $targets
+  debug "removePkg: Processing targets ", $targets
   
   var nativeTargets: seq[string] = @[]
   let repoList = if fileExists(repoFile): loadOrCreateRepoList(repoFile) else: newJArray()
@@ -565,11 +565,11 @@ proc removePkg(pkgMan: string, targets: seq[string]) =
     let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
 
     if foundIndex == -1:
-      debug "Package '" & target & "' not found in manifest. Staging for native manager removal..."
+      debug "Package \'", target, "\' not found in manifest. Staging for native manager removal..."
       nativeTargets.add(target)
       continue
 
-    debug "Found package \'" & target & "\' in manifest."
+    debug "Found package \'", target, "\' in manifest."
     let entry = repoList[foundIndex]
     let pkgName = entry.getOrDefault("pkg_name").getStr("")
     let pkgType =
@@ -579,17 +579,17 @@ proc removePkg(pkgMan: string, targets: seq[string]) =
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
     if installedVer.len == 0:
-      debug "Package '" & pkgName & "' is tracked in manifest but not detected as installed. Skipping local deletion."
+      debug "Package \'", pkgName, "\' is tracked in manifest but not detected as installed. Skipping local deletion."
       continue
 
     # Remove Packages by Type
     case pkgType
     of Deb, Rpm, Pacman:
-      debug "Tracked package '" & pkgName & "' is a native system asset. Offloading to atomic system execution list..."
+      debug "Tracked package \'", pkgName, "\' is a native system asset. Offloading to atomic system execution list..."
       nativeTargets.add(pkgName)
 
     of AppImage:
-      infoMsg("Uninstalling AppImage binary \'" & pkgName & "\'...")
+      infoMsg("Uninstalling AppImage binary \'", pkgName, "\'...")
       let localBinDir = os.getHomeDir() / ".local" / "bin"
       let pkgPath = localBinDir / pkgName
 
@@ -629,7 +629,7 @@ proc removePkg(pkgMan: string, targets: seq[string]) =
   # Batch remaining native targets into one native package manager execution
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
-    infoMsg("Passing unmanifested packages to system package manager: " & nativeTargetStr)
+    infoMsg("Passing unmanifested packages to system package manager: ", nativeTargetStr)
     let exitCode = runNativeCommand(pkgMan, actRemove, nativeTargetStr)
     quit(exitCode)
   else:

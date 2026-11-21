@@ -218,7 +218,7 @@ proc getReleasesJson(repoPath: string, includePrereleases: bool): Future[JsonNod
 
 proc getRepoData(pkgMan, repoPath: string, prerelease, preferMusl: bool): Future[RepoData] {.async.} =
   ## Fetches and scores assets in repo to discover an installable package.
-  infoMsg("Fetching latest release for \'" & repoPath & "\'...")
+  infoMsg("Fetching latest release for \'", repoPath, "\'...")
 
   # Fallback return empty
   result = (name: "", prerelease: false, preferMusl: false, pkgName: "",
@@ -231,7 +231,7 @@ proc getRepoData(pkgMan, repoPath: string, prerelease, preferMusl: bool): Future
     errorMsg("Failed to parse response. You might be rate-limited by GitHub API.")
     return result
   except CatchableError as e:
-    errorMsg("Network error trying to get latest release for \'" & repoPath & "\': " & e.msg)
+    errorMsg("Network error trying to get latest release for \'", repoPath, "\': ", e.msg)
     return result
 
   # Get best matching asset from releases
@@ -290,7 +290,7 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
       waitFor installGitPkg(pkgMan, entry)
 
     else:
-      debug(pkgName & " [" & installedVer & "] is already current.")
+      debug pkgName, " [", installedVer, "] is already current."
 
   successMsg("All packages are up to date!")
 
@@ -324,7 +324,7 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
   try:
     discard await all(futures)
   except CatchableError as e:
-    debug("Some repository updates encountered network issues: " & e.msg)
+    debug("Some repository updates encountered network issues: ", e.msg)
 
   var updatedCount = 0
   for i, future in futures:
@@ -333,7 +333,7 @@ proc refreshGitRepos(pkgMan: string) {.async.} =
     # Check if asynchronous operation succeeded before reading
     if not future.finished or future.failed:
       let repoName = entry.getOrDefault("repo").getStr("unknown")
-      warnMsg("Skipping update check for \'" & repoName & "\' due to network failure.")
+      warnMsg("Skipping update check for \'", repoName, "\' due to network failure.")
       continue
 
     let repoData = future.read()
@@ -382,11 +382,11 @@ proc removeGitRepo(repoInput: string) =
   if removed:
     try:
       writeFile(repoFile, updatedList.pretty())
-      successMsg("Removed \'" & targetRepo & "\' from manifest.")
+      successMsg("Removed \'", targetRepo, "\' from manifest.")
     except IOError:
       errorMsg("Could not save changes to manifest.")
   else:
-    errorMsg("Repository \'" & targetRepo & "\' not found.")
+    errorMsg("Repository \'", targetRepo, "\' not found.")
 
 # ----------------------------------------------------------------------------------------
 #                                    Add
@@ -404,12 +404,12 @@ proc addGitRepo(pkgMan, repoInput: string) {.async.} =
   for entry in repoList:
     let entryRepo = entry.getOrDefault("repo").getStr("").toLowerAscii()
     if entryRepo.len > 0 and entryRepo == repoPath.toLowerAscii():
-      infoMsg "Repository \'" & repoPath & "\' is already in manifest."
+      infoMsg("Repository \'", repoPath, "\' is already in manifest.")
       return
 
   let repoData = await getRepoData(pkgMan, repoPath, prereleaseFlag, preferMuslFlag)
   if repoData.version == "":
-    errorMsg("Could not add repo \'" & repoPath & "\'")
+    errorMsg("Could not add repo \'", repoPath, "\'")
     quit(1)
 
   let newEntry = %*{
@@ -425,6 +425,6 @@ proc addGitRepo(pkgMan, repoInput: string) {.async.} =
 
   try:
     writeFile(repoFile, repoList.pretty())
-    successMsg("Added \'" & repoPath & "\' to manifest")
+    successMsg("Added \'", repoPath, "\' to manifest")
   except IOError:
     errorMsg("Could not save changes to manifest.")
