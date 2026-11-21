@@ -405,45 +405,11 @@ proc installPkg(pkgMan: string, targets: seq[string]) =
   let repoList = if fileExists(repoFile): loadOrCreateRepoList(repoFile) else: newJArray()
 
   for target in targets:
-    let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
+    # Check source type FIRST. Direct URL call acts as a force-reinstall.
+    let srcType = getSourceType(target)
 
-    # Check if target is already in the manifest
-    if foundIndex != -1:
-      debug "Found package '" & target & "' in manifest."
-      let entry = repoList[foundIndex]
-      let pkgName = entry.getOrDefault("pkg_name").getStr("")
-      let manifestVer = entry.getOrDefault("version").getStr("")
-      let downloadUrl = entry.getOrDefault("download_url").getStr("")
-      let pkgType =
-        try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
-        except ValueError: Binary
-
-      if pkgName.len == 0 or downloadUrl.len == 0:
-        debug "Skipping incomplete or malformed entry in manifest registry."
-        continue
-
-      # Get currently installed version
-      let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
-
-      # Check if it's missing or out of date
-      let isMissing = installedVer.len == 0
-      let isStale = (manifestVer.len > 0) and (compareVersionStrings(manifestVer, installedVer) == 1)
-
-      if isMissing or isStale:
-        if isMissing:
-          debug "Package '" & pkgName & "' is not present on the host system. Installing..."
-        else:
-          infoMsg("Upgrade detected for '" & pkgName & "': Local (" & installedVer & ") -> Tracked (" & manifestVer & ")")
-
-        waitFor installGitPkg(pkgMan, entry)
-      else:
-        styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
-        styledWrite(stdout, " is already the newest version ")
-        styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
-
-    # If target's not in manifest and it's a Git repo, add repo then install pkg
-    elif getSourceType(target) in {srcGithubRepo, srcGitlabRepo}:
-      infoMsg("Interpreted input target '" & target & "' as source reference URL.")
+    if srcType in {srcGithubRepo, srcGitlabRepo}:
+      infoMsg("Interpreted input \'", target, "\' as repository URL.")
       waitFor addGitRepo(pkgMan, target)
 
       # Reload manifest to capture the new addition
@@ -455,12 +421,50 @@ proc installPkg(pkgMan: string, targets: seq[string]) =
           waitFor installGitPkg(pkgMan, entry)
           break
 
-    # Unmanaged native packages get sent to native package manager
+    # If its not a Git URL. Check if its already in the manifest
     else:
-      debug "Package '" & target & "' not found in manifest or URLs. Sending to native package manager..."
-      nativeTargets.add(target)
+      let foundIndex = if repoList.len > 0: repoList.findInManifest(target) else: -1
 
-  # Batch remaining native targets into one native package manager execution
+      if foundIndex != -1:
+        debug "Found package \'", target, "\' in manifest."
+        let entry = repoList[foundIndex]
+        let pkgName = entry.getOrDefault("pkg_name").getStr("")
+        let manifestVer = entry.getOrDefault("version").getStr("")
+        let downloadUrl = entry.getOrDefault("download_url").getStr("")
+        let pkgType =
+          try: parseEnum[PkgType](entry.getOrDefault("pkg_type").getStr("Binary"))
+          except ValueError: Binary
+
+        if pkgName.len == 0 or downloadUrl.len == 0:
+          debug "Skipping incomplete or malformed entry in manifest registry."
+          continue
+
+        # Get currently installed version
+        let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+
+        if installedVer == "none":
+          styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
+          styledWriteLine(stdout, " is already present on the system but unversioned. Skipping...")
+          infoMsg("To force upgrade, use 'nova install " & entry.getOrDefault("repo").getStr("") & "\'")
+          continue
+
+        # Check if it's missing or out of date
+        let isMissing = installedVer.len == 0
+        let isStale = (manifestVer.len > 0) and (compareVersionStrings(manifestVer, installedVer) == 1)
+
+        if isMissing or isStale:
+          waitFor installGitPkg(pkgMan, entry)
+        else:
+          styledWrite(stdout, fgGreen, styleBright, pkgName, resetStyle)
+          styledWrite(stdout, " is already the newest version ")
+          styledWriteLine(stdout, fgBlue, styleBright, installedVer, resetStyle)
+
+      # If its not a URL, and not in manifest. Send it to the native package manager
+      else:
+        debug "Package \'", target, "\' not found in manifest. Sending to native package manager..."
+        nativeTargets.add(target)
+
+  # Batch remaining targets into one native package manager execution
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
     infoMsg("Passing unmanifested packages to system package manager: " & nativeTargetStr)
