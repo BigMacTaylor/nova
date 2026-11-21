@@ -82,7 +82,6 @@ proc main() =
   )
 
   var firstAction = ""
-  var action: Action = actUnknown
   var targets: seq[string] = @[]
 
   while true:
@@ -114,7 +113,6 @@ proc main() =
     of cmdArgument:
       if firstAction.len == 0:
         firstAction = p.key
-        action = parseAction(firstAction)
       else:
         targets.add(p.key)
 
@@ -122,24 +120,34 @@ proc main() =
     printHelp()
     quit(0)
 
-  if action == actUnknown:
+  let action = parseAction(firstAction) 
+  case action
+  of actUnknown:
     errorMsg("Unknown action \'", firstAction, "\'")
     infoMsg("Use -h for help \n")
     quit(1)
 
+  of actAddRepo, actSearch, actInstall, actReinstall, actRemove, actRemoveRepo, actInfo:
+    if targets.len == 0:
+      errorMsg("The \'", firstAction, "\' command requires at least one argument.")
+      quit(1)
+
+  of actStatus, actListVersions:
+    if targets.len == 0:
+      errorMsg("The \'", firstAction, "\' command requires at least one argument.")
+      quit(1)
+    elif targets.len > 1:
+      errorMsg("The \'", firstAction, "\' command only accepts one argument.")
+      quit(1)
+
+  of actAutoremove, actRefresh:
+    if targets.len > 0:
+      errorMsg("The \'", firstAction, "\' command doesn't accept an argument.")
+      quit(1)
+
+  else: discard
+
   var targetStr = targets.join(" ")
-
-  if action in {
-    actAddRepo, actSearch, actInstall, actReinstall, actRemove, actRemoveRepo, actInfo,
-    actStatus, actListVersions,
-  } and targetStr.len == 0:
-    errorMsg("The '", firstAction, "' command requires at least one argument.")
-    quit(1)
-
-  if action in {actStatus, actListVersions} and targets.len > 1:
-    errorMsg("The '", firstAction, "' command only accepts one argument.")
-    quit(1)
-
   let pkgMan = getPackageManager()
   if pkgMan == "unknown":
     errorMsg("Could not detect system package manager.")
