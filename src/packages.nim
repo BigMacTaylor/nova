@@ -360,7 +360,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
   of AppImage:
     infoMsg("Installing AppImage binary...")
     # TODO install to /opt
-    let localBinDir = os.getHomeDir() / ".local" / "bin"
+    let localBinDir = os.getHomeDir() / ".local/bin"
     if not dirExists(localBinDir):
       createDir(localBinDir)
 
@@ -376,7 +376,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
       setFilePermissions(pkgPath, perms + {fpUserExec, fpGroupExec, fpOthersExec})
 
       successMsg("Successfully installed AppImage to ", pkgPath)
-      infoMsg("Ensure '", localBinDir, "' is exported to your system $PATH ")
+      infoMsg("Ensure \'", localBinDir, "\' is exported to your system $PATH ")
 
       initDesktopFile(pkgName, pkgPath)
 
@@ -398,7 +398,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
 # ----------------------------------------------------------------------------------------
 
 proc installPkg(pkgMan: string, targets: seq[string]) =
-  ## Installs packages in manifest or from URL, sends remaining to native package manager.
+  ## Installs from URLs or packages in manifest, sends remaining to native package manager.
   debug "installPkg: Processing targets " & $targets
   
   var nativeTargets: seq[string] = @[]
@@ -536,9 +536,9 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
 
       # Install Package
       waitFor installGitPkg(pkgMan, entry)
-      successMsg("Successfully upgraded Git package '", pkgName, "'!")
+      successMsg("Successfully upgraded Git package \'", pkgName, "\'!")
     else:
-      successMsg("Package '", pkgName, "' is already up to date at version ", installedVer)
+      successMsg("Package \'", pkgName, "\' is already up to date at version ", installedVer)
 
   # If there are system packages left over, pass them to the native command routine instead of quitting
   if nativeTargets.len > 0:
@@ -608,7 +608,7 @@ proc removePkg(pkgMan: string, targets: seq[string]) =
 
     of Binary:
       infoMsg("Uninstalling standalone native binary...")
-      let localBinDir = os.getHomeDir() / ".local" / "bin"
+      let localBinDir = os.getHomeDir() / ".local/bin"
       let pkgPath = localBinDir / pkgName
 
       if fileExists(pkgPath):
@@ -626,7 +626,7 @@ proc removePkg(pkgMan: string, targets: seq[string]) =
     of Source:
       warnMsg("Source compilation build uninstallation trees are not yet natively supported.")
 
-  # Batch remaining native targets into one native package manager execution
+  # Batch remaining targets into one native package manager execution
   if nativeTargets.len > 0:
     let nativeTargetStr = nativeTargets.join(" ")
     infoMsg("Passing unmanifested packages to system package manager: ", nativeTargetStr)

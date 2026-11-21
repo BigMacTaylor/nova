@@ -31,8 +31,13 @@ proc listGitUpdates(pkgMan: string) =
 
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+
     if installedVer.len == 0:
-      debug "Package '" & pkgName & "' not found on host system. Skipping..."
+      debug "Package \'" & pkgName & "\' not found on host system. Skipping..."
+      continue
+
+    if installedVer == "none":
+      debug "Package \'", pkgName, "\' is unversioned. Automatic upgrade skipped."
       continue
 
     # Check if it's out of date
