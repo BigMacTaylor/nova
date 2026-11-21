@@ -216,6 +216,10 @@ proc getReleasesJson(repoPath: string, includePrereleases: bool): Future[JsonNod
   finally:
     client.close()
 
+# ----------------------------------------------------------------------------------------
+#                                    Repo Data
+# ----------------------------------------------------------------------------------------
+
 proc getRepoData(pkgMan, repoPath: string, prerelease, preferMusl: bool): Future[RepoData] {.async.} =
   ## Fetches and scores assets in repo to discover an installable package.
   infoMsg("Fetching latest release for \'", repoPath, "\'...")

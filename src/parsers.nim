@@ -200,11 +200,11 @@ proc getNativeVersion(pkgMan, pkgName: string): string =
   return ""
 
 proc getMountedAppImageVer(appImagePath: string): string =
-  ## Extracts the version string from an AppImage by mounting it via FUSE,
-  ## reading its .desktop file metadata, and cleanly unmounting it.
+  ## Extracts the version of an AppImage by mounting it via FUSE,
+  ## and reading its .desktop file.
 
   # Start the AppImage mount process in the background
-  # poStdErrToStdOut combines streams so we can catch early initialization errors
+  # poStdErrToStdOut combines streams to catch early initialization errors
   var process: Process = nil
   try:
     process = startProcess(
@@ -265,62 +265,91 @@ proc getMountedAppImageVer(appImagePath: string): string =
   return result
 
 proc getAppImageVersion(appName: string): string =
-  ## Searches the AppImage metadata for version string
+  ## Extracts the version from a Type 2 AppImage by calculating
+  ## the ELF section offset and passing it to unsquashfs.
   debug "getAppImageVersion"
-  let appsDir = os.getHomeDir() / ".local" / "bin"
+  let appsDir = os.getHomeDir() / ".local/bin"
   let appImagePath = appsDir / appName
 
   var fs = newFileStream(appImagePath, fmRead)
+  var squashfsOffset: uint64 = 0
+
   if fs != nil:
     try:
       # Read the first 16 bytes to inspect the AppImage Magic Number
       let header = fs.readStr(16)
-      
-      # AppImage Specification check: Type 2 explicitly embeds 'A', 'I', 0x02 at byte index 8
+      # AppImage Type 2 explicitly embeds 'A', 'I', 0x02 at byte index 8
       let isType2 = header.len >= 11 and header[8] == 'A' and header[9] == 'I' and header[10] == '\x02'
-      
+
       if not isType2:
-        debug "Legacy Type 1 AppImage detected. Skipping execution-based extraction pipelines safely."
-        # Legacy Type 1 configs generally embed version context into their external filenames 
-        # (e.g. app-1.0.0.AppImage). Fall back to parsing the file name string directly.
+        debug "Legacy Type 1 or invalid AppImage. Falling back to filename parsing."
+        # Legacy Type 1 apps generally embed version context in their filenames 
         fs.close()
         return normalizeVersion(appName)
 
-      # Reset stream head position back to start
-      fs.setPosition(0)
+      # Parse ELF structural data to compute end of binary segments
+      # For 64-bit ELF (Class 2 at byte 4):
+      # e_shoff (Section Header Table Offset) is an 8-byte unsigned int at byte 40
+      # e_shentsize (Size of Section Header entry) is a 2-byte unsigned int at byte 58
+      # e_shnum (Number of entries in Section Header table) is a 2-byte unsigned int at byte 60
+      fs.setPosition(40)
+      var e_shoff: uint64
+      if fs.readData(addr e_shoff, sizeof(e_shoff)) != sizeof(e_shoff): raise newException(IOError, "")
 
-      # AppImage embedding rules put metadata definitions in the first 32KB block.
-      const scanLimit = 32768
+      fs.setPosition(58)
+      var e_shentsize: uint16
+      if fs.readData(addr e_shentsize, sizeof(e_shentsize)) != sizeof(e_shentsize): raise newException(IOError, "")
 
-      # Scan the memory buffer for the metadata sequence
-      let buffer = fs.readStr(scanLimit)
-      let pattern = "X-AppImage-Version="
-      let matchPos = buffer.find(pattern)
-      
-      if matchPos != -1:
-        # Extract the version payload terminating at the next control character or newline
-        var val = ""
-        var idx = matchPos + pattern.len
-        while idx < buffer.len:
-          let c = buffer[idx]
-          if c in {'\0', '\n', '\r'}: break
-          val.add(c)
-          inc(idx)
-        result = val.strip()
+      var e_shnum: uint16
+      if fs.readData(addr e_shnum, sizeof(e_shnum)) != sizeof(e_shnum): raise newException(IOError, "")
 
-    except CatchableError:
-      discard
+      # The SquashFS partition sits directly following the final ELF section header block
+      squashfsOffset = e_shoff + (uint64(e_shentsize) * uint64(e_shnum))
+
+      # Check layout integrity against standard raw filesystem magic number
+      fs.setPosition(int(squashfsOffset))
+      var magicCheck: uint32
+      if fs.readData(addr magicCheck, sizeof(magicCheck)) == sizeof(magicCheck):
+        if magicCheck == 0x73717368'u32: # Little-endian "hsqs"
+          debug "Verified SquashFS filesystem signature at offset: " & $squashfsOffset
+        else:
+          debug "Warning: SquashFS signature mismatch at offset calculated: " & $squashfsOffset
+
+    except CatchableError as e:
+      debug "Static ELF section header calculation failed: " & e.msg
     finally:
       if fs != nil: fs.close()
 
-  # Fall back to process mounting if structural parsing failed
+    # Use unsquashfs to seek inside the file at the offset
+    if squashfsOffset > 0:
+      if osproc.execCmd("which unsquashfs > /dev/null 2>&1") == 0:
+        try:
+          # -o [offset]: Jump past the ELF stub directly to the filesystem payload
+          # -p 1: Use 1 processor thread to minimize overhead
+          # "*.desktop": Micro-extract only the desktop config file containing the version
+          let extractCmd = "unsquashfs -o " & $squashfsOffset & " -p 1 -cat " & appImagePath.quoteShell & " \"*.desktop\""
+
+          let (output, exitCode) = osproc.execCmdEx(extractCmd)
+          if exitCode == 0 and output.len > 0:
+            for line in output.splitLines():
+              let cleanLine = line.strip()
+              if cleanLine.startsWith("X-AppImage-Version="):
+                let parts = cleanLine.split('=', 1)
+                if parts.len == 2:
+                  return parts[1].strip()
+
+          else: debug "unsquashfs failed with exit code: ", $exitCode, output
+
+        except CatchableError as e:
+          debug "Static decompression tool failed: " & e.msg
+      else:
+        debug "unsquashfs utility not found on the system."
+
   if result.len == 0:
     debug "Static header extraction failed. Falling back to mounting AppImage..."
     return getMountedAppImageVer(appImagePath)
 
-  return result
-
-proc checkBinaryFlag(binaryPath, flag: string, timeoutMs: int = 500): (string, bool) =
+proc checkBinaryFlag(binaryPath, flag: string, timeoutMs: int = 1000): (string, bool) =
   ## Spawns a sandboxed subprocess with a strict timeout.
   var process: Process = nil
   try:
@@ -376,7 +405,7 @@ proc checkBinaryFlag(binaryPath, flag: string, timeoutMs: int = 500): (string, b
 proc getBinaryVersion(pkgName: string): string =
   ## Tries to execute the local binary with '--version', '-v', or 'version'
   debug "getBinaryVersion"
-  let binaryPath = os.getHomeDir() / ".local" / "bin" / pkgName
+  let binaryPath = os.getHomeDir() / ".local/bin" / pkgName
 
   const flags = ["--version", "-v", "version"]
 
@@ -445,6 +474,10 @@ proc getInstalledVersion(pkgMan, pkgName: string, pkgType: PkgType): string =
   else:
     debug "unsupported package type: ", pkgType
     return ""
+
+# ----------------------------------------------------------------------------------------
+#                                    Repo Name/Type
+# ----------------------------------------------------------------------------------------
 
 proc loadOrCreateRepoList(fileName: string): JsonNode =
   if fileExists(fileName):
@@ -540,6 +573,10 @@ proc getRepoName*(target: string): string =
     return parts[0]
 
   return ""
+
+# ----------------------------------------------------------------------------------------
+#                                    Package Name
+# ----------------------------------------------------------------------------------------
 
 proc findVersionStart(asset: string): int =
   var i = 0
