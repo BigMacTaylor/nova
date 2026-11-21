@@ -273,7 +273,11 @@ proc upgradeGitRepos(pkgMan: string) {.async.} =
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
     if installedVer.len == 0:
-      debug "Package '" & pkgName & "' not found on host system. Skipping..."
+      debug "Package \'", pkgName, "\' not found on host system. Skipping..."
+      continue
+
+    if installedVer == "none":
+      warnMsg("Package \'", pkgName, "\' is unversioned. Skipping...")
       continue
 
     # Check if it's out of date

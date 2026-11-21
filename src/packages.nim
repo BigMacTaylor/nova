@@ -398,7 +398,7 @@ proc installGitPkg(pkgMan: string, pkgEntry: JsonNode) {.async.} =
 # ----------------------------------------------------------------------------------------
 
 proc installPkg(pkgMan: string, targets: seq[string]) =
-  ## Installs from URLs or packages in manifest, sends remaining to native package manager.
+  ## Installs packages in manifest or from URL, sends remaining to native package manager.
   debug "installPkg: Processing targets " & $targets
   
   var nativeTargets: seq[string] = @[]
@@ -492,7 +492,6 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
     infoMsg("Target package '" & target & "' managed by Nova. Initiating manifest upgrade...")
     let entry = repoList[foundIndex]
     let pkgName = entry.getOrDefault("pkg_name").getStr("")
-    #let oldVersion = entry.getOrDefault("version").getStr("")
     let repoPath = entry.getOrDefault("repo").getStr("")
     let prerelease = entry.getOrDefault("prerelease").getBool(false)
     let preferMusl = entry.getOrDefault("prefer_musl").getBool(false)
@@ -502,6 +501,11 @@ proc upgradePkg(pkgMan: string, targets: seq[string]) =
 
     # Get currently installed version
     let installedVer = getInstalledVersion(pkgMan, pkgName, pkgType)
+
+    if installedVer == "none":
+      warnMsg("Package \'", pkgName, "\' is unversioned. Automatic upgrade skipped.")
+      infoMsg("To force upgrade, use 'nova install ", entry.getOrDefault("repo").getStr(""), "\'")
+      continue
 
     let repoData = waitFor getRepoData(pkgMan, repoPath, prerelease, preferMusl)
     
