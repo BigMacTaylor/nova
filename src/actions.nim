@@ -51,14 +51,24 @@ proc runPreExecutionHooks(pkgMan: string, action: Action, targetStr: string, tar
       quit(1)
 
   of actAddRepo:
-    if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
-      waitFor pkgMan.addGitRepo(targetStr)
+    if targets.len > 0:
+      for target in targets:
+        if getSourceType(target) in {srcGithubRepo, srcGitlabRepo}:
+          waitFor addGitRepo(pkgMan, target)
       quit(0)
+    else:
+      errorMsg("The 'add' command requires at least one repository target.")
+      quit(1)
 
   of actRemoveRepo:
-    if getSourceType(targetStr) in {srcGithubRepo, srcGitlabRepo}:
-      removeGitRepo(targetStr)
+    if targets.len > 0:
+      for target in targets:
+        if getSourceType(target) in {srcGithubRepo, srcGitlabRepo}:
+          removeGitRepo(target)
       quit(0)
+    else:
+      errorMsg("The 'remove-repo' command requires at least one repository target.")
+      quit(1)
 
   of actUpgrade:
     if targets.len > 0:
